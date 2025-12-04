@@ -1,6 +1,13 @@
 """Main entry point for Media Tracker application."""
 
 import sys
+from pathlib import Path
+
+# Add src directory to Python path for proper imports
+src_dir = Path(__file__).parent
+if str(src_dir) not in sys.path:
+    sys.path.insert(0, str(src_dir))
+
 from PyQt6.QtWidgets import QApplication
 from ui.main_window import MainWindow
 
