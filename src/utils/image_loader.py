@@ -2,7 +2,7 @@
 
 import requests
 from PyQt6.QtGui import QPixmap
-from PyQt6.QtCore import QByteArray
+from PyQt6.QtCore import QByteArray, Qt
 from pathlib import Path
 
 
@@ -37,7 +37,11 @@ class ImageLoader:
         if cache_path.exists():
             pixmap = QPixmap(str(cache_path))
             if not pixmap.isNull():
-                return pixmap.scaled(max_width, max_height, aspectRatioMode=1, transformMode=1)
+                return pixmap.scaled(
+                    max_width, max_height,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation
+                )
 
         # Download from URL
         try:
@@ -54,7 +58,11 @@ class ImageLoader:
             pixmap.loadFromData(byte_array)
 
             if not pixmap.isNull():
-                return pixmap.scaled(max_width, max_height, aspectRatioMode=1, transformMode=1)
+                return pixmap.scaled(
+                    max_width, max_height,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation
+                )
 
         except (requests.RequestException, IOError) as e:
             print(f"Failed to load image from {url}: {e}")
