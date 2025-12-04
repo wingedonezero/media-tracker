@@ -114,7 +114,6 @@ class MainWindow(QMainWindow):
 
         # Sub-tabs for status
         sub_tabs = QTabWidget()
-        sub_tabs.currentChanged.connect(lambda: self.on_sub_tab_changed(media_type))
 
         # Create table for each status
         for status in ["On Drive", "To Download", "To Work On"]:
@@ -131,8 +130,11 @@ class MainWindow(QMainWindow):
 
         layout.addWidget(sub_tabs)
 
-        # Store reference to sub-tabs
+        # Store reference to sub-tabs BEFORE connecting signals
         setattr(self, f"{media_type.lower().replace(' ', '_')}_sub_tabs", sub_tabs)
+
+        # Connect signal AFTER storing the reference
+        sub_tabs.currentChanged.connect(lambda: self.on_sub_tab_changed(media_type))
 
         return tab_widget
 
