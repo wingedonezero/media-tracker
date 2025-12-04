@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import (
     QLineEdit, QSpinBox, QComboBox, QTextEdit, QPushButton,
     QLabel, QListWidget, QMessageBox, QGroupBox
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 from database.models import MediaItem
 from api.tmdb_client import TMDBClient
 from api.anilist_client import AniListClient
@@ -34,6 +34,11 @@ class EditDialog(QDialog):
         self.anilist_client = anilist_client
         self.search_results = []
 
+        # Timer for auto-search as you type
+        self.search_timer = QTimer()
+        self.search_timer.setSingleShot(True)
+        self.search_timer.timeout.connect(self.search_online)
+
         self.setWindowTitle(f"{'Edit' if item else 'Add'} {media_type}")
         self.setMinimumWidth(600)
         self.setMinimumHeight(500)
@@ -52,7 +57,8 @@ class EditDialog(QDialog):
 
             search_input_layout = QHBoxLayout()
             self.search_input = QLineEdit()
-            self.search_input.setPlaceholderText("Search for title...")
+            self.search_input.setPlaceholderText("Start typing to search...")
+            self.search_input.textChanged.connect(self.on_search_text_changed)
             self.search_input.returnPressed.connect(self.search_online)
 
             self.search_button = QPushButton("Search")
@@ -66,7 +72,7 @@ class EditDialog(QDialog):
             self.search_results_list.itemDoubleClicked.connect(self.select_search_result)
 
             search_layout.addLayout(search_input_layout)
-            search_layout.addWidget(QLabel("Double-click to select:"))
+            search_layout.addWidget(QLabel("Results appear as you type. Double-click to select:"))
             search_layout.addWidget(self.search_results_list)
 
             search_group.setLayout(search_layout)
@@ -79,6 +85,15 @@ class EditDialog(QDialog):
         self.title_input = QLineEdit()
         self.title_input.setPlaceholderText("Enter title...")
         form_layout.addRow("Title:", self.title_input)
+
+        # Native title field (for anime only)
+        if self.media_type == "Anime":
+            self.native_title_input = QLineEdit()
+            self.native_title_input.setPlaceholderText("Japanese title...")
+            self.native_title_input.setReadOnly(True)  # Auto-filled from API
+            form_layout.addRow("Japanese Title:", self.native_title_input)
+        else:
+            self.native_title_input = None
 
         self.year_input = QSpinBox()
         self.year_input.setRange(1900, 2100)
@@ -131,6 +146,8 @@ class EditDialog(QDialog):
         """Load existing item data into form fields."""
         if self.item.id:
             self.title_input.setText(self.item.title or '')
+            if self.native_title_input and self.item.native_title:
+                self.native_title_input.setText(self.item.native_title)
             if self.item.year:
                 self.year_input.setValue(self.item.year)
             self.status_combo.setCurrentText(self.item.status)
@@ -140,6 +157,16 @@ class EditDialog(QDialog):
                 self.source_input.setText(self.item.source)
             if self.item.notes:
                 self.notes_input.setPlainText(self.item.notes)
+
+    def on_search_text_changed(self):
+        """Handle search text changed - trigger search after delay."""
+        # Stop the current timer if running
+        self.search_timer.stop()
+
+        # Only search if there's text
+        if self.search_input.text().strip():
+            # Start timer for 500ms delay (search after user stops typing)
+            self.search_timer.start(500)
 
     def search_online(self):
         """Search online database for media."""
@@ -164,7 +191,8 @@ class EditDialog(QDialog):
 
             for result in results:
                 year_str = f" ({result['year']})" if result['year'] else ""
-                self.search_results_list.addItem(f"{result['title']}{year_str}")
+                native_str = f" - {result['native_title']}" if result.get('native_title') else ""
+                self.search_results_list.addItem(f"{result['title']}{year_str}{native_str}")
 
         else:
             if not self.tmdb_client or not self.tmdb_client.api_key:
@@ -208,6 +236,10 @@ class EditDialog(QDialog):
             except (ValueError, TypeError):
                 pass
 
+        # Fill native title for anime
+        if self.native_title_input and result.get('native_title'):
+            self.native_title_input.setText(result['native_title'])
+
         # Store API IDs
         if self.media_type == "Anime":
             self.item.anilist_id = result['id']
@@ -220,6 +252,8 @@ class EditDialog(QDialog):
     def get_item(self) -> MediaItem:
         """Get the media item with form data."""
         self.item.title = self.title_input.text().strip()
+        if self.native_title_input:
+            self.item.native_title = self.native_title_input.text().strip() or None
         year = self.year_input.value()
         self.item.year = year if year > 1900 else None
         self.item.status = self.status_combo.currentText()

@@ -11,6 +11,7 @@ class MediaItem:
 
     id: Optional[int] = None
     title: str = ""
+    native_title: Optional[str] = None  # Japanese/native title for anime
     year: Optional[int] = None
     media_type: str = "Movie"  # TV/Movie/Anime
     status: str = "To Download"  # On Drive/To Download/To Work On
@@ -28,6 +29,7 @@ class MediaItem:
         return {
             'id': self.id,
             'title': self.title,
+            'native_title': self.native_title,
             'year': self.year,
             'media_type': self.media_type,
             'status': self.status,

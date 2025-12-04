@@ -37,6 +37,7 @@ class AniListClient:
                     title {
                         romaji
                         english
+                        native
                     }
                     seasonYear
                     description
@@ -60,10 +61,12 @@ class AniListClient:
         for item in data['data']['Page']['media']:
             # Prefer English title, fall back to Romaji
             title = item['title'].get('english') or item['title'].get('romaji')
+            native_title = item['title'].get('native')
 
             results.append({
                 'id': item.get('id'),
                 'title': title,
+                'native_title': native_title,
                 'year': item.get('seasonYear'),
                 'overview': self._clean_description(item.get('description')),
                 'poster_url': item.get('coverImage', {}).get('large')
@@ -80,6 +83,7 @@ class AniListClient:
                 title {
                     romaji
                     english
+                    native
                 }
                 seasonYear
                 description
@@ -98,10 +102,12 @@ class AniListClient:
 
         item = data['data']['Media']
         title = item['title'].get('english') or item['title'].get('romaji')
+        native_title = item['title'].get('native')
 
         return {
             'id': item.get('id'),
             'title': title,
+            'native_title': native_title,
             'year': item.get('seasonYear'),
             'overview': self._clean_description(item.get('description')),
             'poster_url': item.get('coverImage', {}).get('large'),

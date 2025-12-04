@@ -30,6 +30,7 @@ class DatabaseManager:
                 CREATE TABLE IF NOT EXISTS media_items (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     title TEXT NOT NULL,
+                    native_title TEXT,
                     year INTEGER,
                     media_type TEXT NOT NULL,
                     status TEXT NOT NULL,
@@ -43,6 +44,14 @@ class DatabaseManager:
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
+
+            # Add native_title column if it doesn't exist (migration)
+            try:
+                cursor.execute('ALTER TABLE media_items ADD COLUMN native_title TEXT')
+                conn.commit()
+            except sqlite3.OperationalError:
+                # Column already exists
+                pass
 
             # Create indexes for faster queries
             cursor.execute('''
@@ -61,11 +70,11 @@ class DatabaseManager:
             cursor = conn.cursor()
             cursor.execute('''
                 INSERT INTO media_items
-                (title, year, media_type, status, quality_type, source, notes,
+                (title, native_title, year, media_type, status, quality_type, source, notes,
                  tmdb_id, anilist_id, poster_url)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
-                item.title, item.year, item.media_type, item.status,
+                item.title, item.native_title, item.year, item.media_type, item.status,
                 item.quality_type, item.source, item.notes,
                 item.tmdb_id, item.anilist_id, item.poster_url
             ))
@@ -78,12 +87,12 @@ class DatabaseManager:
             cursor = conn.cursor()
             cursor.execute('''
                 UPDATE media_items
-                SET title=?, year=?, media_type=?, status=?, quality_type=?,
+                SET title=?, native_title=?, year=?, media_type=?, status=?, quality_type=?,
                     source=?, notes=?, tmdb_id=?, anilist_id=?, poster_url=?,
                     updated_at=CURRENT_TIMESTAMP
                 WHERE id=?
             ''', (
-                item.title, item.year, item.media_type, item.status,
+                item.title, item.native_title, item.year, item.media_type, item.status,
                 item.quality_type, item.source, item.notes,
                 item.tmdb_id, item.anilist_id, item.poster_url, item.id
             ))
@@ -122,6 +131,7 @@ class DatabaseManager:
                 item = MediaItem(
                     id=row['id'],
                     title=row['title'],
+                    native_title=row.get('native_title'),
                     year=row['year'],
                     media_type=row['media_type'],
                     status=row['status'],
@@ -163,6 +173,7 @@ class DatabaseManager:
                 item = MediaItem(
                     id=row['id'],
                     title=row['title'],
+                    native_title=row.get('native_title'),
                     year=row['year'],
                     media_type=row['media_type'],
                     status=row['status'],
