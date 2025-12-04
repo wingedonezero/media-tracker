@@ -4,7 +4,7 @@ import sqlite3
 from pathlib import Path
 from typing import List, Optional
 from datetime import datetime
-from .models import MediaItem
+from database.models import MediaItem
 
 
 class DatabaseManager:

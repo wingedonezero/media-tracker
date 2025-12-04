@@ -6,9 +6,9 @@ from PyQt6.QtWidgets import (
     QLabel, QListWidget, QMessageBox, QGroupBox
 )
 from PyQt6.QtCore import Qt
-from ...database.models import MediaItem
-from ...api.tmdb_client import TMDBClient
-from ...api.anilist_client import AniListClient
+from database.models import MediaItem
+from api.tmdb_client import TMDBClient
+from api.anilist_client import AniListClient
 
 
 class EditDialog(QDialog):
