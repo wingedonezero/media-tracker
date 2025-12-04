@@ -1,12 +1,13 @@
 """Reusable media table widget for displaying media items."""
 
 from PyQt6.QtWidgets import (
-    QTableWidget, QTableWidgetItem, QHeaderView, QMenu, QMessageBox
+    QTableWidget, QTableWidgetItem, QHeaderView, QMenu, QMessageBox, QLabel
 )
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QAction
+from PyQt6.QtGui import QAction, QPixmap
 from typing import List
 from database.models import MediaItem
+from utils.image_loader import ImageLoader
 
 
 class MediaTable(QTableWidget):
@@ -21,8 +22,14 @@ class MediaTable(QTableWidget):
         """Initialize media table."""
         super().__init__(parent)
 
+        # Image loader
+        self.image_loader = ImageLoader()
+
+        # Row height setting (can be changed via settings)
+        self.row_height = 80
+
         # Column configuration
-        self.columns = ['Title', 'Year', 'Quality', 'Source', 'Notes']
+        self.columns = ['Poster', 'Title', 'Year', 'Quality', 'Source', 'Notes']
         self.setColumnCount(len(self.columns))
         self.setHorizontalHeaderLabels(self.columns)
 
@@ -35,11 +42,13 @@ class MediaTable(QTableWidget):
 
         # Resize columns to content
         header = self.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)  # Title
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)  # Year
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)  # Quality
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)  # Source
-        header.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)  # Notes
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)  # Poster
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)  # Title
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)  # Year
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)  # Quality
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)  # Source
+        header.setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)  # Notes
+        self.setColumnWidth(0, 60)  # Fixed width for poster column
 
         # Enable context menu
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -57,14 +66,37 @@ class MediaTable(QTableWidget):
         self.setRowCount(len(items))
 
         for row, item in enumerate(items):
-            self.setItem(row, 0, QTableWidgetItem(item.title or ''))
-            self.setItem(row, 1, QTableWidgetItem(str(item.year) if item.year else ''))
-            self.setItem(row, 2, QTableWidgetItem(item.quality_type or ''))
-            self.setItem(row, 3, QTableWidgetItem(item.source or ''))
-            self.setItem(row, 4, QTableWidgetItem(item.notes or ''))
+            # Set row height
+            self.setRowHeight(row, self.row_height)
 
-            # Store the item ID in the first column for easy retrieval
-            self.item(row, 0).setData(Qt.ItemDataRole.UserRole, item.id)
+            # Poster image (column 0)
+            poster_label = QLabel()
+            poster_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            if item.poster_url:
+                pixmap = self.image_loader.load_image(
+                    item.poster_url,
+                    max_width=50,
+                    max_height=self.row_height - 10
+                )
+                if not pixmap.isNull():
+                    poster_label.setPixmap(pixmap)
+            self.setCellWidget(row, 0, poster_label)
+
+            # Text columns
+            self.setItem(row, 1, QTableWidgetItem(item.title or ''))
+            self.setItem(row, 2, QTableWidgetItem(str(item.year) if item.year else ''))
+            self.setItem(row, 3, QTableWidgetItem(item.quality_type or ''))
+            self.setItem(row, 4, QTableWidgetItem(item.source or ''))
+            self.setItem(row, 5, QTableWidgetItem(item.notes or ''))
+
+            # Store the item ID in the title column for easy retrieval
+            self.item(row, 1).setData(Qt.ItemDataRole.UserRole, item.id)
+
+    def set_row_height(self, height: int):
+        """Set the row height for all rows."""
+        self.row_height = height
+        for row in range(self.rowCount()):
+            self.setRowHeight(row, height)
 
     def get_selected_item(self) -> MediaItem:
         """Get the currently selected media item."""

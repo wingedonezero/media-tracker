@@ -8,6 +8,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QAction
 from ui.media_table import MediaTable
 from ui.dialogs.edit_dialog import EditDialog
+from ui.settings_dialog import SettingsDialog
 from database.db_manager import DatabaseManager
 from database.models import MediaItem
 from api.tmdb_client import TMDBClient
@@ -101,9 +102,14 @@ class MainWindow(QMainWindow):
 
         toolbar.addSeparator()
 
+        # TMDB API Key button
+        tmdb_action = QAction("TMDB API Key", self)
+        tmdb_action.triggered.connect(self.configure_tmdb)
+        toolbar.addAction(tmdb_action)
+
         # Settings button
-        settings_action = QAction("TMDB API Key", self)
-        settings_action.triggered.connect(self.configure_tmdb)
+        settings_action = QAction("Settings", self)
+        settings_action.triggered.connect(self.open_settings)
         toolbar.addAction(settings_action)
 
     def create_media_type_tab(self, media_type: str) -> QWidget:
@@ -279,6 +285,26 @@ class MainWindow(QMainWindow):
         if ok and api_key.strip():
             self.tmdb_client.api_key = api_key.strip()
             QMessageBox.information(self, "Success", "TMDB API key configured!")
+
+    def open_settings(self):
+        """Open settings dialog."""
+        # Get current row height from any table
+        current_table = self.get_current_table()
+        current_height = current_table.row_height
+
+        dialog = SettingsDialog(current_row_height=current_height, parent=self)
+
+        if dialog.exec():
+            new_height = dialog.get_row_height()
+
+            # Update all tables with new row height
+            for media_type in ["Movie", "TV", "Anime"]:
+                for status in ["On Drive", "To Download", "To Work On"]:
+                    table_name = f"{media_type.lower().replace(' ', '_')}_{status.lower().replace(' ', '_')}_table"
+                    table = getattr(self, table_name)
+                    table.set_row_height(new_height)
+
+            QMessageBox.information(self, "Settings Saved", f"Row height set to {new_height}px")
 
     def update_status_bar(self):
         """Update status bar with current stats."""

@@ -9,6 +9,7 @@ from PyQt6.QtCore import Qt, QTimer
 from database.models import MediaItem
 from api.tmdb_client import TMDBClient
 from api.anilist_client import AniListClient
+from utils.image_loader import ImageLoader
 
 
 class EditDialog(QDialog):
@@ -33,6 +34,7 @@ class EditDialog(QDialog):
         self.tmdb_client = tmdb_client
         self.anilist_client = anilist_client
         self.search_results = []
+        self.image_loader = ImageLoader()
 
         # Timer for auto-search as you type
         self.search_timer = QTimer()
@@ -40,8 +42,8 @@ class EditDialog(QDialog):
         self.search_timer.timeout.connect(self.search_online)
 
         self.setWindowTitle(f"{'Edit' if item else 'Add'} {media_type}")
-        self.setMinimumWidth(600)
-        self.setMinimumHeight(500)
+        self.setMinimumWidth(700)
+        self.setMinimumHeight(550)
 
         self.setup_ui()
         self.load_item_data()
@@ -77,6 +79,21 @@ class EditDialog(QDialog):
 
             search_group.setLayout(search_layout)
             layout.addWidget(search_group)
+
+        # Main content layout (poster on left, form on right)
+        content_layout = QHBoxLayout()
+
+        # Poster display
+        poster_container = QVBoxLayout()
+        self.poster_label = QLabel()
+        self.poster_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.poster_label.setMinimumSize(150, 225)
+        self.poster_label.setMaximumSize(150, 225)
+        self.poster_label.setStyleSheet("border: 1px solid gray; background-color: #f0f0f0;")
+        poster_container.addWidget(QLabel("Poster:"))
+        poster_container.addWidget(self.poster_label)
+        poster_container.addStretch()
+        content_layout.addLayout(poster_container)
 
         # Form fields
         form_group = QGroupBox("Details")
@@ -123,7 +140,10 @@ class EditDialog(QDialog):
         form_layout.addRow("Notes:", self.notes_input)
 
         form_group.setLayout(form_layout)
-        layout.addWidget(form_group)
+        content_layout.addWidget(form_group)
+
+        # Add content layout to main layout
+        layout.addLayout(content_layout)
 
         # Buttons
         button_layout = QHBoxLayout()
@@ -157,6 +177,21 @@ class EditDialog(QDialog):
                 self.source_input.setText(self.item.source)
             if self.item.notes:
                 self.notes_input.setPlainText(self.item.notes)
+
+        # Load poster image
+        if self.item.poster_url:
+            self.update_poster(self.item.poster_url)
+
+    def update_poster(self, poster_url: str):
+        """Update the poster image display."""
+        if poster_url:
+            pixmap = self.image_loader.load_image(poster_url, max_width=150, max_height=225)
+            if not pixmap.isNull():
+                self.poster_label.setPixmap(pixmap)
+            else:
+                self.poster_label.setText("No Image")
+        else:
+            self.poster_label.setText("No Poster")
 
     def on_search_text_changed(self):
         """Handle search text changed - trigger search after delay."""
@@ -246,8 +281,10 @@ class EditDialog(QDialog):
         else:
             self.item.tmdb_id = result['id']
 
+        # Update poster
         if result.get('poster_url'):
             self.item.poster_url = result['poster_url']
+            self.update_poster(result['poster_url'])
 
     def get_item(self) -> MediaItem:
         """Get the media item with form data."""

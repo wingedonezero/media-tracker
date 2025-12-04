@@ -128,10 +128,13 @@ class DatabaseManager:
 
             items = []
             for row in rows:
+                # Handle native_title for backward compatibility
+                native_title = row['native_title'] if 'native_title' in row.keys() else None
+
                 item = MediaItem(
                     id=row['id'],
                     title=row['title'],
-                    native_title=row.get('native_title'),
+                    native_title=native_title,
                     year=row['year'],
                     media_type=row['media_type'],
                     status=row['status'],
@@ -170,10 +173,13 @@ class DatabaseManager:
 
             items = []
             for row in rows:
+                # Handle native_title for backward compatibility
+                native_title = row['native_title'] if 'native_title' in row.keys() else None
+
                 item = MediaItem(
                     id=row['id'],
                     title=row['title'],
-                    native_title=row.get('native_title'),
+                    native_title=native_title,
                     year=row['year'],
                     media_type=row['media_type'],
                     status=row['status'],
