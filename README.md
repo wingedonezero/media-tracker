@@ -38,6 +38,13 @@ pip install -r requirements.txt
 ```
 
 3. Run the application:
+
+**Option 1 (Recommended):**
+```bash
+python run.py
+```
+
+**Option 2:**
 ```bash
 python src/main.py
 ```
