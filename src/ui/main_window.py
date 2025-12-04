@@ -6,12 +6,12 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QAction
-from .media_table import MediaTable
-from .dialogs.edit_dialog import EditDialog
-from ..database.db_manager import DatabaseManager
-from ..database.models import MediaItem
-from ..api.tmdb_client import TMDBClient
-from ..api.anilist_client import AniListClient
+from ui.media_table import MediaTable
+from ui.dialogs.edit_dialog import EditDialog
+from database.db_manager import DatabaseManager
+from database.models import MediaItem
+from api.tmdb_client import TMDBClient
+from api.anilist_client import AniListClient
 
 
 class MainWindow(QMainWindow):

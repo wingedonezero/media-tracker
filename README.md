@@ -38,15 +38,8 @@ pip install -r requirements.txt
 ```
 
 3. Run the application:
-
-**Option 1 (Recommended):**
 ```bash
-python run.py
-```
-
-**Option 2:**
-```bash
-python src/main.py
+python main.py
 ```
 
 ## Configuration
@@ -141,8 +134,8 @@ The quality field is editable, so you can add your own custom values!
 
 ```
 media-tracker/
+├── main.py                     # Application entry point
 ├── src/
-│   ├── main.py                 # Application entry point
 │   ├── ui/
 │   │   ├── main_window.py      # Main window with tabs
 │   │   ├── media_table.py      # Reusable table widget
