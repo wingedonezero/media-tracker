@@ -49,5 +49,34 @@ class ConfigManager:
             'row_height': 80,
             'tmdb_api_key': '',
             'window_width': 1200,
-            'window_height': 700
+            'window_height': 700,
+            'quality_types': [
+                "Remux",
+                "WebDL",
+                "BluRay",
+                "WEB-DL 1080p",
+                "WEB-DL 2160p",
+                "Remux 1080p",
+                "Remux 2160p",
+                "BluRay 1080p",
+                "BluRay 2160p"
+            ]
         }
+
+    def get_quality_types(self) -> list:
+        """Get the list of quality types."""
+        return self.get('quality_types', self.get_defaults()['quality_types'])
+
+    def add_quality_type(self, quality_type: str):
+        """Add a new quality type."""
+        quality_types = self.get_quality_types()
+        if quality_type not in quality_types:
+            quality_types.append(quality_type)
+            self.set('quality_types', quality_types)
+
+    def remove_quality_type(self, quality_type: str):
+        """Remove a quality type."""
+        quality_types = self.get_quality_types()
+        if quality_type in quality_types:
+            quality_types.remove(quality_type)
+            self.set('quality_types', quality_types)

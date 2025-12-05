@@ -8,6 +8,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QAction
 from ui.media_table import MediaTable
 from ui.dialogs.edit_dialog import EditDialog
+from ui.dialogs.quality_types_dialog import QualityTypesDialog
 from ui.settings_dialog import SettingsDialog
 from database.db_manager import DatabaseManager
 from database.models import MediaItem
@@ -121,6 +122,11 @@ class MainWindow(QMainWindow):
         tmdb_action.triggered.connect(self.configure_tmdb)
         toolbar.addAction(tmdb_action)
 
+        # Quality Types button
+        quality_types_action = QAction("Quality Types", self)
+        quality_types_action.triggered.connect(self.manage_quality_types)
+        toolbar.addAction(quality_types_action)
+
         # Settings button
         settings_action = QAction("Settings", self)
         settings_action.triggered.connect(self.open_settings)
@@ -209,6 +215,7 @@ class MainWindow(QMainWindow):
             self.current_media_type,
             tmdb_client=self.tmdb_client,
             anilist_client=self.anilist_client,
+            config_manager=self.config,
             parent=self
         )
 
@@ -241,6 +248,7 @@ class MainWindow(QMainWindow):
             item=item,
             tmdb_client=self.tmdb_client,
             anilist_client=self.anilist_client,
+            config_manager=self.config,
             parent=self
         )
 
@@ -328,6 +336,25 @@ class MainWindow(QMainWindow):
                     table.set_row_height(new_height)
 
             QMessageBox.information(self, "Settings Saved", f"Row height set to {new_height}px")
+
+    def manage_quality_types(self):
+        """Open quality types management dialog."""
+        dialog = QualityTypesDialog(
+            config_manager=self.config,
+            db_manager=self.db,
+            parent=self
+        )
+
+        dialog.exec()
+
+        # If quality types were modified, show a message
+        if dialog.was_modified():
+            QMessageBox.information(
+                self,
+                "Quality Types Updated",
+                "Quality types have been updated. The changes will be reflected "
+                "when you add or edit items."
+            )
 
     def update_status_bar(self):
         """Update status bar with current stats."""

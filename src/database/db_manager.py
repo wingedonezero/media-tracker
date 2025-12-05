@@ -227,3 +227,14 @@ class DatabaseManager:
             ''', (title, year, media_type))
             result = cursor.fetchone()
             return result['count'] > 0
+
+    def count_items_with_quality_type(self, quality_type: str) -> int:
+        """Count how many items are using a specific quality type."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT COUNT(*) as count FROM media_items
+                WHERE quality_type=?
+            ''', (quality_type,))
+            result = cursor.fetchone()
+            return result['count']
