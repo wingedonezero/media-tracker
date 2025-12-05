@@ -135,13 +135,14 @@ class EditDialog(QDialog):
         self.quality_combo.setEditable(True)
         # Load quality types from config
         if self.config:
-            quality_types = [""] + self.config.get_quality_types()
+            quality_types = [""] + sorted(self.config.get_quality_types())
         else:
             # Fallback to defaults if config not provided
             quality_types = [
                 "", "Remux", "WebDL", "BluRay", "WEB-DL 1080p", "WEB-DL 2160p",
                 "Remux 1080p", "Remux 2160p", "BluRay 1080p", "BluRay 2160p"
             ]
+            quality_types = [""] + sorted(quality_types[1:])  # Sort the defaults too
         self.quality_combo.addItems(quality_types)
         form_layout.addRow("Quality Type:", self.quality_combo)
 

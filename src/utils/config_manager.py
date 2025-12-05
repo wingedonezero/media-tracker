@@ -51,15 +51,15 @@ class ConfigManager:
             'window_width': 1200,
             'window_height': 700,
             'quality_types': [
-                "Remux",
-                "WebDL",
                 "BluRay",
-                "WEB-DL 1080p",
-                "WEB-DL 2160p",
+                "BluRay 1080p",
+                "BluRay 2160p",
+                "Remux",
                 "Remux 1080p",
                 "Remux 2160p",
-                "BluRay 1080p",
-                "BluRay 2160p"
+                "WEB-DL 1080p",
+                "WEB-DL 2160p",
+                "WebDL"
             ]
         }
 
