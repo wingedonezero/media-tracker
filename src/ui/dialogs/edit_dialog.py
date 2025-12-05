@@ -10,6 +10,7 @@ from database.models import MediaItem
 from api.tmdb_client import TMDBClient
 from api.anilist_client import AniListClient
 from utils.image_loader import ImageLoader
+from utils.config_manager import ConfigManager
 
 
 class EditDialog(QDialog):
@@ -17,7 +18,7 @@ class EditDialog(QDialog):
 
     def __init__(self, media_type: str, item: MediaItem = None,
                  tmdb_client: TMDBClient = None, anilist_client: AniListClient = None,
-                 parent=None):
+                 config_manager: ConfigManager = None, parent=None):
         """
         Initialize edit dialog.
 
@@ -26,6 +27,7 @@ class EditDialog(QDialog):
             item: Existing item to edit, or None for new item
             tmdb_client: TMDB API client
             anilist_client: AniList API client
+            config_manager: Configuration manager for quality types
         """
         super().__init__(parent)
 
@@ -33,6 +35,7 @@ class EditDialog(QDialog):
         self.item = item or MediaItem(media_type=media_type)
         self.tmdb_client = tmdb_client
         self.anilist_client = anilist_client
+        self.config = config_manager
         self.search_results = []
         self.image_loader = ImageLoader()
 
@@ -130,10 +133,16 @@ class EditDialog(QDialog):
 
         self.quality_combo = QComboBox()
         self.quality_combo.setEditable(True)
-        self.quality_combo.addItems([
-            "", "Remux", "WebDL", "BluRay", "WEB-DL 1080p", "WEB-DL 2160p",
-            "Remux 1080p", "Remux 2160p", "BluRay 1080p", "BluRay 2160p"
-        ])
+        # Load quality types from config
+        if self.config:
+            quality_types = [""] + self.config.get_quality_types()
+        else:
+            # Fallback to defaults if config not provided
+            quality_types = [
+                "", "Remux", "WebDL", "BluRay", "WEB-DL 1080p", "WEB-DL 2160p",
+                "Remux 1080p", "Remux 2160p", "BluRay 1080p", "BluRay 2160p"
+            ]
+        self.quality_combo.addItems(quality_types)
         form_layout.addRow("Quality Type:", self.quality_combo)
 
         self.source_input = QLineEdit()
