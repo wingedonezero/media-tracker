@@ -13,6 +13,7 @@ from database.db_manager import DatabaseManager
 from database.models import MediaItem
 from api.tmdb_client import TMDBClient
 from api.anilist_client import AniListClient
+from utils.config_manager import ConfigManager
 
 
 class MainWindow(QMainWindow):
@@ -22,12 +23,25 @@ class MainWindow(QMainWindow):
         """Initialize main window."""
         super().__init__()
 
+        # Initialize config manager
+        self.config = ConfigManager()
+
         self.setWindowTitle("Media Tracker")
-        self.setGeometry(100, 100, 1200, 700)
+
+        # Load window size from config
+        width = self.config.get('window_width', 1200)
+        height = self.config.get('window_height', 700)
+        self.setGeometry(100, 100, width, height)
 
         # Initialize database and API clients
         self.db = DatabaseManager()
+
+        # Initialize TMDB client and load API key from config
         self.tmdb_client = TMDBClient()
+        saved_api_key = self.config.get('tmdb_api_key', '')
+        if saved_api_key:
+            self.tmdb_client.api_key = saved_api_key
+
         self.anilist_client = AniListClient()
 
         # Store current media type and status
@@ -121,6 +135,9 @@ class MainWindow(QMainWindow):
         # Sub-tabs for status
         sub_tabs = QTabWidget()
 
+        # Get saved row height from config
+        saved_row_height = self.config.get('row_height', 80)
+
         # Create table for each status
         for status in ["On Drive", "To Download", "To Work On"]:
             table = MediaTable()
@@ -128,6 +145,9 @@ class MainWindow(QMainWindow):
             table.item_deleted.connect(self.delete_item)
             table.item_moved.connect(self.move_item)
             table.refresh_requested.connect(self.load_data)
+
+            # Apply saved row height
+            table.set_row_height(saved_row_height)
 
             # Store reference to table
             setattr(self, f"{media_type.lower().replace(' ', '_')}_{status.lower().replace(' ', '_')}_table", table)
@@ -284,18 +304,21 @@ class MainWindow(QMainWindow):
 
         if ok and api_key.strip():
             self.tmdb_client.api_key = api_key.strip()
+            self.config.set('tmdb_api_key', api_key.strip())
             QMessageBox.information(self, "Success", "TMDB API key configured!")
 
     def open_settings(self):
         """Open settings dialog."""
-        # Get current row height from any table
-        current_table = self.get_current_table()
-        current_height = current_table.row_height
+        # Get current row height from config
+        current_height = self.config.get('row_height', 80)
 
         dialog = SettingsDialog(current_row_height=current_height, parent=self)
 
         if dialog.exec():
             new_height = dialog.get_row_height()
+
+            # Save to config
+            self.config.set('row_height', new_height)
 
             # Update all tables with new row height
             for media_type in ["Movie", "TV", "Anime"]:
@@ -313,3 +336,10 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             f"{self.current_media_type} - {self.current_status}: {count} items"
         )
+
+    def closeEvent(self, event):
+        """Handle window close event to save settings."""
+        # Save window size
+        self.config.set('window_width', self.width())
+        self.config.set('window_height', self.height())
+        event.accept()

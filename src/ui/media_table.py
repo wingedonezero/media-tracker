@@ -1,7 +1,7 @@
 """Reusable media table widget for displaying media items."""
 
 from PyQt6.QtWidgets import (
-    QTableWidget, QTableWidgetItem, QHeaderView, QMenu, QMessageBox, QLabel
+    QTableWidget, QTableWidgetItem, QHeaderView, QMenu, QMessageBox, QLabel, QApplication
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QAction, QPixmap
@@ -126,6 +126,33 @@ class MediaTable(QTableWidget):
 
         menu.addSeparator()
 
+        # Copy name action(s)
+        if item.media_type == "Anime":
+            # For anime, show submenu with all title types
+            copy_menu = menu.addMenu("Copy Name")
+
+            if item.title:
+                copy_english = QAction(f"English: {item.title[:30]}...", self) if len(item.title) > 30 else QAction(f"English: {item.title}", self)
+                copy_english.triggered.connect(lambda: self._copy_to_clipboard(item.title))
+                copy_menu.addAction(copy_english)
+
+            if item.romaji_title:
+                copy_romaji = QAction(f"Romaji: {item.romaji_title[:30]}...", self) if len(item.romaji_title) > 30 else QAction(f"Romaji: {item.romaji_title}", self)
+                copy_romaji.triggered.connect(lambda: self._copy_to_clipboard(item.romaji_title))
+                copy_menu.addAction(copy_romaji)
+
+            if item.native_title:
+                copy_native = QAction(f"Japanese: {item.native_title[:30]}...", self) if len(item.native_title) > 30 else QAction(f"Japanese: {item.native_title}", self)
+                copy_native.triggered.connect(lambda: self._copy_to_clipboard(item.native_title))
+                copy_menu.addAction(copy_native)
+        else:
+            # For movies/TV, just copy the title directly
+            copy_action = QAction("Copy Name", self)
+            copy_action.triggered.connect(lambda: self._copy_to_clipboard(item.title))
+            menu.addAction(copy_action)
+
+        menu.addSeparator()
+
         # Move to submenu
         move_menu = menu.addMenu("Move to")
 
@@ -151,6 +178,11 @@ class MediaTable(QTableWidget):
         menu.addAction(refresh_action)
 
         menu.exec(self.viewport().mapToGlobal(position))
+
+    def _copy_to_clipboard(self, text: str):
+        """Copy text to clipboard."""
+        clipboard = QApplication.clipboard()
+        clipboard.setText(text)
 
     def _confirm_delete(self, item: MediaItem):
         """Confirm before deleting an item."""
