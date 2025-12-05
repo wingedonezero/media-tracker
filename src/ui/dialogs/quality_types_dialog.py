@@ -81,7 +81,7 @@ class QualityTypesDialog(QDialog):
     def load_quality_types(self):
         """Load quality types from config into the list."""
         self.quality_list.clear()
-        quality_types = self.config.get_quality_types()
+        quality_types = sorted(self.config.get_quality_types())
 
         for quality_type in quality_types:
             # Check how many items are using this quality type
