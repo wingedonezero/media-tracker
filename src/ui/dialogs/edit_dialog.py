@@ -103,14 +103,20 @@ class EditDialog(QDialog):
         self.title_input.setPlaceholderText("Enter title...")
         form_layout.addRow("Title:", self.title_input)
 
-        # Native title field (for anime only)
+        # Native and Romaji title fields (for anime only)
         if self.media_type == "Anime":
             self.native_title_input = QLineEdit()
             self.native_title_input.setPlaceholderText("Japanese title...")
             self.native_title_input.setReadOnly(True)  # Auto-filled from API
             form_layout.addRow("Japanese Title:", self.native_title_input)
+
+            self.romaji_title_input = QLineEdit()
+            self.romaji_title_input.setPlaceholderText("Romaji title...")
+            self.romaji_title_input.setReadOnly(True)  # Auto-filled from API
+            form_layout.addRow("Romaji Title:", self.romaji_title_input)
         else:
             self.native_title_input = None
+            self.romaji_title_input = None
 
         self.year_input = QSpinBox()
         self.year_input.setRange(1900, 2100)
@@ -168,6 +174,8 @@ class EditDialog(QDialog):
             self.title_input.setText(self.item.title or '')
             if self.native_title_input and self.item.native_title:
                 self.native_title_input.setText(self.item.native_title)
+            if self.romaji_title_input and self.item.romaji_title:
+                self.romaji_title_input.setText(self.item.romaji_title)
             if self.item.year:
                 self.year_input.setValue(self.item.year)
             self.status_combo.setCurrentText(self.item.status)
@@ -271,9 +279,11 @@ class EditDialog(QDialog):
             except (ValueError, TypeError):
                 pass
 
-        # Fill native title for anime
+        # Fill native and romaji titles for anime
         if self.native_title_input and result.get('native_title'):
             self.native_title_input.setText(result['native_title'])
+        if self.romaji_title_input and result.get('romaji_title'):
+            self.romaji_title_input.setText(result['romaji_title'])
 
         # Store API IDs
         if self.media_type == "Anime":
@@ -291,6 +301,8 @@ class EditDialog(QDialog):
         self.item.title = self.title_input.text().strip()
         if self.native_title_input:
             self.item.native_title = self.native_title_input.text().strip() or None
+        if self.romaji_title_input:
+            self.item.romaji_title = self.romaji_title_input.text().strip() or None
         year = self.year_input.value()
         self.item.year = year if year > 1900 else None
         self.item.status = self.status_combo.currentText()

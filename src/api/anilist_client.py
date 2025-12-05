@@ -62,11 +62,13 @@ class AniListClient:
             # Prefer English title, fall back to Romaji
             title = item['title'].get('english') or item['title'].get('romaji')
             native_title = item['title'].get('native')
+            romaji_title = item['title'].get('romaji')
 
             results.append({
                 'id': item.get('id'),
                 'title': title,
                 'native_title': native_title,
+                'romaji_title': romaji_title,
                 'year': item.get('seasonYear'),
                 'overview': self._clean_description(item.get('description')),
                 'poster_url': item.get('coverImage', {}).get('large')
@@ -103,11 +105,13 @@ class AniListClient:
         item = data['data']['Media']
         title = item['title'].get('english') or item['title'].get('romaji')
         native_title = item['title'].get('native')
+        romaji_title = item['title'].get('romaji')
 
         return {
             'id': item.get('id'),
             'title': title,
             'native_title': native_title,
+            'romaji_title': romaji_title,
             'year': item.get('seasonYear'),
             'overview': self._clean_description(item.get('description')),
             'poster_url': item.get('coverImage', {}).get('large'),

@@ -31,6 +31,7 @@ class DatabaseManager:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     title TEXT NOT NULL,
                     native_title TEXT,
+                    romaji_title TEXT,
                     year INTEGER,
                     media_type TEXT NOT NULL,
                     status TEXT NOT NULL,
@@ -53,6 +54,14 @@ class DatabaseManager:
                 # Column already exists
                 pass
 
+            # Add romaji_title column if it doesn't exist (migration)
+            try:
+                cursor.execute('ALTER TABLE media_items ADD COLUMN romaji_title TEXT')
+                conn.commit()
+            except sqlite3.OperationalError:
+                # Column already exists
+                pass
+
             # Create indexes for faster queries
             cursor.execute('''
                 CREATE INDEX IF NOT EXISTS idx_media_type_status
@@ -70,11 +79,11 @@ class DatabaseManager:
             cursor = conn.cursor()
             cursor.execute('''
                 INSERT INTO media_items
-                (title, native_title, year, media_type, status, quality_type, source, notes,
+                (title, native_title, romaji_title, year, media_type, status, quality_type, source, notes,
                  tmdb_id, anilist_id, poster_url)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
-                item.title, item.native_title, item.year, item.media_type, item.status,
+                item.title, item.native_title, item.romaji_title, item.year, item.media_type, item.status,
                 item.quality_type, item.source, item.notes,
                 item.tmdb_id, item.anilist_id, item.poster_url
             ))
@@ -87,12 +96,12 @@ class DatabaseManager:
             cursor = conn.cursor()
             cursor.execute('''
                 UPDATE media_items
-                SET title=?, native_title=?, year=?, media_type=?, status=?, quality_type=?,
+                SET title=?, native_title=?, romaji_title=?, year=?, media_type=?, status=?, quality_type=?,
                     source=?, notes=?, tmdb_id=?, anilist_id=?, poster_url=?,
                     updated_at=CURRENT_TIMESTAMP
                 WHERE id=?
             ''', (
-                item.title, item.native_title, item.year, item.media_type, item.status,
+                item.title, item.native_title, item.romaji_title, item.year, item.media_type, item.status,
                 item.quality_type, item.source, item.notes,
                 item.tmdb_id, item.anilist_id, item.poster_url, item.id
             ))
@@ -128,13 +137,15 @@ class DatabaseManager:
 
             items = []
             for row in rows:
-                # Handle native_title for backward compatibility
+                # Handle native_title and romaji_title for backward compatibility
                 native_title = row['native_title'] if 'native_title' in row.keys() else None
+                romaji_title = row['romaji_title'] if 'romaji_title' in row.keys() else None
 
                 item = MediaItem(
                     id=row['id'],
                     title=row['title'],
                     native_title=native_title,
+                    romaji_title=romaji_title,
                     year=row['year'],
                     media_type=row['media_type'],
                     status=row['status'],
@@ -156,11 +167,19 @@ class DatabaseManager:
         with self.get_connection() as conn:
             cursor = conn.cursor()
 
-            query = '''
-                SELECT * FROM media_items
-                WHERE (title LIKE ? OR notes LIKE ?)
-            '''
-            params = [f'%{search_term}%', f'%{search_term}%']
+            # For anime, search all three title fields
+            if media_type == "Anime":
+                query = '''
+                    SELECT * FROM media_items
+                    WHERE (title LIKE ? OR notes LIKE ? OR native_title LIKE ? OR romaji_title LIKE ?)
+                '''
+                params = [f'%{search_term}%', f'%{search_term}%', f'%{search_term}%', f'%{search_term}%']
+            else:
+                query = '''
+                    SELECT * FROM media_items
+                    WHERE (title LIKE ? OR notes LIKE ?)
+                '''
+                params = [f'%{search_term}%', f'%{search_term}%']
 
             if media_type:
                 query += ' AND media_type=?'
@@ -173,13 +192,15 @@ class DatabaseManager:
 
             items = []
             for row in rows:
-                # Handle native_title for backward compatibility
+                # Handle native_title and romaji_title for backward compatibility
                 native_title = row['native_title'] if 'native_title' in row.keys() else None
+                romaji_title = row['romaji_title'] if 'romaji_title' in row.keys() else None
 
                 item = MediaItem(
                     id=row['id'],
                     title=row['title'],
                     native_title=native_title,
+                    romaji_title=romaji_title,
                     year=row['year'],
                     media_type=row['media_type'],
                     status=row['status'],
