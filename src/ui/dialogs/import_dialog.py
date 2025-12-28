@@ -3,7 +3,7 @@
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
     QProgressBar, QTreeWidget, QTreeWidgetItem, QFileDialog,
-    QMessageBox, QGroupBox, QCheckBox, QTextEdit, QSplitter
+    QMessageBox, QGroupBox, QCheckBox, QTextEdit, QSplitter, QComboBox
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QColor, QBrush
@@ -102,6 +102,25 @@ class ImportDialog(QDialog):
         # Splitter for tree and details
         splitter = QSplitter(Qt.Orientation.Vertical)
 
+        # Tree controls
+        tree_controls = QHBoxLayout()
+
+        select_all_btn = QPushButton("Select All Successful")
+        select_all_btn.clicked.connect(self.select_all_successful)
+        select_all_btn.setToolTip("Select all new (non-duplicate) matches")
+        tree_controls.addWidget(select_all_btn)
+
+        expand_all_btn = QPushButton("Expand All")
+        expand_all_btn.clicked.connect(lambda: self.results_tree.expandAll())
+        tree_controls.addWidget(expand_all_btn)
+
+        collapse_all_btn = QPushButton("Collapse All")
+        collapse_all_btn.clicked.connect(lambda: self.results_tree.collapseAll())
+        tree_controls.addWidget(collapse_all_btn)
+
+        tree_controls.addStretch()
+        results_layout.addLayout(tree_controls)
+
         # Results tree
         self.results_tree = QTreeWidget()
         self.results_tree.setHeaderLabels([
@@ -110,6 +129,7 @@ class ImportDialog(QDialog):
         self.results_tree.setColumnWidth(0, 100)
         self.results_tree.setColumnWidth(1, 300)
         self.results_tree.setColumnWidth(2, 200)
+        self.results_tree.setSelectionMode(QTreeWidget.SelectionMode.ExtendedSelection)
         self.results_tree.itemSelectionChanged.connect(self.on_selection_changed)
         splitter.addWidget(self.results_tree)
 
@@ -140,6 +160,16 @@ class ImportDialog(QDialog):
 
         # Actions
         actions_layout = QHBoxLayout()
+
+        # Status selector for adding items
+        actions_layout.addWidget(QLabel("Add to:"))
+        self.status_combo = QComboBox()
+        self.status_combo.addItems(["On Drive", "To Download", "To Work On"])
+        self.status_combo.setCurrentText("To Download")
+        self.status_combo.setMinimumWidth(150)
+        actions_layout.addWidget(self.status_combo)
+
+        actions_layout.addWidget(QLabel("|"))
 
         self.add_all_button = QPushButton("Add All Successful Matches")
         self.add_all_button.clicked.connect(self.add_all_matches)
@@ -449,6 +479,9 @@ class ImportDialog(QDialog):
         added_count = 0
         added_ids = []
 
+        # Get selected status from combo box
+        selected_status = self.status_combo.currentText()
+
         for match in matches:
             try:
                 media_item = MediaItem(
@@ -457,7 +490,7 @@ class ImportDialog(QDialog):
                     romaji_title=match.get('romaji_title'),
                     year=match.get('year'),
                     media_type='Anime',
-                    status='To Download',
+                    status=selected_status,
                     anilist_id=match.get('id'),
                     poster_url=match.get('poster_url')
                 )
@@ -473,6 +506,41 @@ class ImportDialog(QDialog):
             self.import_service.mark_as_added(added_ids)
 
         return added_count
+
+    def select_all_successful(self):
+        """Select all successful (non-duplicate) matches in the tree."""
+        self.results_tree.clearSelection()
+
+        for i in range(self.results_tree.topLevelItemCount()):
+            parent = self.results_tree.topLevelItem(i)
+
+            # Iterate through child matches
+            for j in range(parent.childCount()):
+                child = parent.child(j)
+
+                # Check if this is a non-duplicate match
+                match = child.data(0, Qt.ItemDataRole.UserRole)
+                if isinstance(match, dict):
+                    is_dup, _ = self.import_service.check_duplicate(match)
+                    if not is_dup:
+                        child.setSelected(True)
+
+        # Show count
+        selected_count = len(self.results_tree.selectedItems())
+        if selected_count > 0:
+            QMessageBox.information(
+                self,
+                "Selection",
+                f"Selected {selected_count} new matches.\n\n"
+                "Tip: Use Ctrl+Click to deselect individual items, or "
+                "Shift+Click to select ranges."
+            )
+        else:
+            QMessageBox.information(
+                self,
+                "No Matches",
+                "No new matches to select (all are duplicates or no results)."
+            )
 
     def export_unmatched(self):
         """Export unmatched entries to a text file."""
