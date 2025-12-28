@@ -156,8 +156,8 @@ class SmartImportService:
 
     def parse_titles_from_entry(self, entry: str) -> Dict[str, str]:
         """
-        Extract titles from bracketed format or fallback to whole text.
-        Format: [Chinese][English/Romaji][Japanese][technical details...]
+        Extract titles from bracketed format using smart language detection.
+        Does NOT assume bracket order - categorizes by language instead.
         """
         titles = {
             'english': '',
@@ -172,7 +172,6 @@ class SmartImportService:
         if not brackets:
             # Fallback: No brackets, use whole text if it's not too long
             if len(entry) < 100:
-                # Clean it up first
                 cleaned = self._clean_non_bracketed_entry(entry)
                 if cleaned:
                     titles['english'] = cleaned
@@ -193,35 +192,44 @@ class SmartImportService:
                 titles['romaji'] = cleaned
             return titles
 
-        # First non-technical bracket is usually Chinese
-        if len(non_technical_brackets) >= 1:
-            titles['chinese'] = non_technical_brackets[0].strip()
+        # Categorize brackets by language
+        latin_brackets = []   # English/Romaji
+        japanese_brackets = []  # Japanese
+        chinese_brackets = []   # Chinese (has CJK but not Japanese-specific chars)
 
-        # Second bracket is usually English or Romaji
-        if len(non_technical_brackets) >= 2:
-            second = non_technical_brackets[1].strip()
-            # If it contains mostly Latin characters, it's probably English/Romaji
-            if self._is_latin_text(second):
-                titles['english'] = self._clean_extracted_title(second)
-                titles['romaji'] = self._clean_extracted_title(second)
+        for bracket in non_technical_brackets:
+            bracket = bracket.strip()
+            if not bracket:
+                continue
 
-        # Third bracket is usually Japanese
-        if len(non_technical_brackets) >= 3:
-            third = non_technical_brackets[2].strip()
-            # If it contains Japanese characters
-            if self._contains_japanese(third):
-                titles['japanese'] = self._clean_extracted_title(third)
+            # Check language
+            if self._contains_japanese(bracket):
+                japanese_brackets.append(bracket)
+            elif self._is_latin_text(bracket):
+                latin_brackets.append(bracket)
+            elif self._contains_cjk(bracket):
+                # Has CJK chars but not Japanese-specific = Chinese
+                chinese_brackets.append(bracket)
 
-        # Look for better English names in later brackets
-        for i in range(1, min(len(non_technical_brackets), 5)):
-            text = non_technical_brackets[i].strip()
-            if self._is_latin_text(text) and not self._looks_like_technical(text):
-                if not titles['english'] or len(text) > len(titles['english']):
-                    cleaned = self._clean_extracted_title(text)
-                    if cleaned:  # Only use if cleaning didn't remove everything
-                        titles['english'] = cleaned
-                        if not titles['romaji']:
-                            titles['romaji'] = cleaned
+        # Assign titles based on language categories
+        # English: Use longest Latin bracket (likely the full title)
+        if latin_brackets:
+            # Sort by length, take longest
+            latin_brackets.sort(key=len, reverse=True)
+            best_latin = self._clean_extracted_title(latin_brackets[0])
+            if best_latin:
+                titles['english'] = best_latin
+                titles['romaji'] = best_latin
+
+        # Japanese: Use first Japanese bracket
+        if japanese_brackets:
+            japanese_title = self._clean_extracted_title(japanese_brackets[0])
+            if japanese_title:
+                titles['japanese'] = japanese_title
+
+        # Chinese: Use first Chinese bracket
+        if chinese_brackets:
+            titles['chinese'] = chinese_brackets[0]
 
         return titles
 
@@ -276,14 +284,27 @@ class SmartImportService:
         return latin_chars / len(text) > 0.6
 
     def _contains_japanese(self, text: str) -> bool:
-        """Check if text contains Japanese characters."""
+        """Check if text contains Japanese-specific characters (Hiragana/Katakana)."""
         japanese_ranges = [
             (0x3040, 0x309F),  # Hiragana
             (0x30A0, 0x30FF),  # Katakana
-            (0x4E00, 0x9FFF),  # Kanji
         ]
         return any(
             any(start <= ord(char) <= end for start, end in japanese_ranges)
+            for char in text
+        )
+
+    def _contains_cjk(self, text: str) -> bool:
+        """Check if text contains CJK (Chinese/Japanese/Korean) characters."""
+        cjk_ranges = [
+            (0x4E00, 0x9FFF),   # CJK Unified Ideographs
+            (0x3400, 0x4DBF),   # CJK Extension A
+            (0x20000, 0x2A6DF), # CJK Extension B
+            (0x3040, 0x309F),   # Hiragana
+            (0x30A0, 0x30FF),   # Katakana
+        ]
+        return any(
+            any(start <= ord(char) <= end for start, end in cjk_ranges)
             for char in text
         )
 
@@ -293,6 +314,21 @@ class SmartImportService:
             return True
 
         text_lower = text.lower().strip()
+
+        # IMMEDIATELY filter out uploader patterns with @
+        if '@' in text:
+            return True
+
+        # Filter out "Set X", "Vol X", "Part X" patterns
+        set_patterns = [
+            r'^set\s+\d+$',
+            r'^vol\.?\s*\d+$',
+            r'^volume\s+\d+$',
+            r'^part\s+\d+$',
+        ]
+        for pattern in set_patterns:
+            if re.match(pattern, text_lower):
+                return True
 
         # Check for unambiguous technical keywords
         # BUT: Don't filter if it's a long text with trailing junk
@@ -332,20 +368,6 @@ class SmartImportService:
                     rest = ' '.join(words[1:])
                     if not rest or re.match(r'^[\d\-\s×x\.]+$', rest):
                         return True
-
-        # Check for uploader/group names (contain @ or common patterns)
-        # BUT: Allow if there's substantial content that can be cleaned
-        if '@' in text:
-            # If it has substantial real content before the @, allow it (will be cleaned)
-            if has_substantial_content:
-                # Check if @ is not at the beginning
-                at_pos = text.index('@')
-                if at_pos > 5:  # Has content before @
-                    pass  # Will be cleaned later
-                else:
-                    return True  # Filter it out
-            else:
-                return True
 
         # Check for technical patterns
         patterns = [
@@ -419,30 +441,36 @@ class SmartImportService:
         all_matches = []
         seen_ids = set()
 
-        # STRATEGY 0: Try offline database first (if available)
+        # STRATEGY 0: Try offline database as "spell checker" (if available)
+        # Use it to find the BEST title variants to search with, not for final results
         if self.offline_matcher and self.offline_matcher.loaded:
             try:
-                offline_matches = self.offline_matcher.match_titles(titles, min_score=80)
+                offline_matches = self.offline_matcher.match_titles(titles, min_score=85)
 
                 if offline_matches:
-                    # Fetch full data from AniList for matched IDs
-                    # Take top 5 matches to avoid too many API calls
-                    for anilist_id, offline_confidence, anime_data, title_type in offline_matches[:5]:
-                        if anilist_id in seen_ids:
-                            continue
+                    # Get the best matched title from offline DB
+                    # This is our "cleaned" title to search AniList with
+                    best_match = offline_matches[0]  # (anilist_id, confidence, anime_data, title_type)
+                    _, confidence, anime_data, _ = best_match
 
-                        # Fetch full anime data from AniList
+                    # Extract the best title variant from offline DB
+                    cleaned_title = anime_data.get('title', '')
+
+                    if cleaned_title and confidence >= 0.85:
+                        # Use this cleaned title to SEARCH AniList (not fetch by ID)
                         self._rate_limit_wait()
-                        anime_info = self.anilist_client.get_anime_details(anilist_id)
+                        year = self._extract_year(cleaned_title)
+                        matches = self.anilist_client.search_anime(cleaned_title, year)
 
-                        if anime_info:
-                            all_matches.append(anime_info)
-                            seen_ids.add(anilist_id)
+                        for match in matches:
+                            if match['id'] not in seen_ids:
+                                all_matches.append(match)
+                                seen_ids.add(match['id'])
 
-                    # If offline matching found good results, use them
-                    if all_matches:
-                        self.search_cache[cache_key] = [dict(m) for m in all_matches]
-                        return all_matches, False
+                        # If offline DB helped us find good results, use them
+                        if all_matches:
+                            self.search_cache[cache_key] = [dict(m) for m in all_matches]
+                            return all_matches, False
 
             except Exception as e:
                 print(f"Offline matching failed: {e}, falling back to API search")
