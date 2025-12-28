@@ -9,6 +9,7 @@ from PyQt6.QtGui import QAction
 from ui.media_table import MediaTable
 from ui.dialogs.edit_dialog import EditDialog
 from ui.dialogs.quality_types_dialog import QualityTypesDialog
+from ui.dialogs.import_dialog import ImportDialog
 from ui.settings_dialog import SettingsDialog
 from database.db_manager import DatabaseManager
 from database.models import MediaItem
@@ -107,6 +108,11 @@ class MainWindow(QMainWindow):
         add_action = QAction("Add Item", self)
         add_action.triggered.connect(self.add_item)
         toolbar.addAction(add_action)
+
+        # Import button (for Anime only)
+        import_action = QAction("Import Anime", self)
+        import_action.triggered.connect(self.import_anime)
+        toolbar.addAction(import_action)
 
         toolbar.addSeparator()
 
@@ -240,6 +246,19 @@ class MainWindow(QMainWindow):
             self.db.add_item(item)
             self.load_data()
             self.statusBar().showMessage(f"Added: {item.title}", 3000)
+
+    def import_anime(self):
+        """Import anime from Excel/ODS file."""
+        dialog = ImportDialog(
+            parent=self,
+            db_manager=self.db,
+            anilist_client=self.anilist_client
+        )
+
+        dialog.exec()
+
+        # Reload data after import
+        self.load_data()
 
     def edit_item(self, item: MediaItem):
         """Edit an existing media item."""

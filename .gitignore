@@ -28,3 +28,10 @@ config.ini
 # OS
 .DS_Store
 Thumbs.db
+
+# Import data (contains private data)
+Sheet/
+*.ods
+*.xlsx
+*.xls
+import_data.*
