@@ -24,8 +24,9 @@ class SmartImportService:
     """Service for importing anime from Excel/ODS files with smart matching."""
 
     # AniList rate limit: 90 requests per minute
-    # We'll use 1.5 seconds to be EXTRA safe (~40/min instead of 60/min)
-    RATE_LIMIT_DELAY = 1.5
+    # We'll use 2.5 seconds to be ULTRA safe (~24/min instead of 60/min)
+    # This is conservative but prevents rate limit errors entirely
+    RATE_LIMIT_DELAY = 2.5
 
     # Minimum confidence threshold (0-1)
     MIN_CONFIDENCE = 0.35  # Only include matches with 35%+ confidence
