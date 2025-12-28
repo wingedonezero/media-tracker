@@ -24,8 +24,8 @@ class SmartImportService:
     """Service for importing anime from Excel/ODS files with smart matching."""
 
     # AniList rate limit: 90 requests per minute
-    # We'll use 1 request per second to be safe (60/min)
-    RATE_LIMIT_DELAY = 1.0
+    # We'll use 1.5 seconds to be EXTRA safe (~40/min instead of 60/min)
+    RATE_LIMIT_DELAY = 1.5
 
     # Minimum confidence threshold (0-1)
     MIN_CONFIDENCE = 0.35  # Only include matches with 35%+ confidence
@@ -420,8 +420,14 @@ class SmartImportService:
                     all_matches.append(match)
                     seen_ids.add(match['id'])
 
+            # If we got good results, stop here to save API calls
+            if len(all_matches) >= 5:
+                self.search_cache[cache_key] = [dict(m) for m in all_matches]
+                return all_matches, False
+
         # Strategy 2: Try Romaji if different from English
-        if titles.get('romaji') and titles['romaji'] != titles.get('english', ''):
+        # SKIP if we already have ANY matches (save API calls)
+        if len(all_matches) == 0 and titles.get('romaji') and titles['romaji'] != titles.get('english', ''):
             self._rate_limit_wait()
             year = self._extract_year(titles['romaji'])
             matches = self.anilist_client.search_anime(titles['romaji'], year)
@@ -431,9 +437,14 @@ class SmartImportService:
                     all_matches.append(match)
                     seen_ids.add(match['id'])
 
+            # If we got results, stop
+            if len(all_matches) >= 3:
+                self.search_cache[cache_key] = [dict(m) for m in all_matches]
+                return all_matches, False
+
         # Strategy 3: Try Japanese title
-        # Skip if we already have good matches
-        if len(all_matches) < 3 and titles.get('japanese'):
+        # ONLY if we have NO matches yet
+        if len(all_matches) == 0 and titles.get('japanese'):
             self._rate_limit_wait()
             matches = self.anilist_client.search_anime(titles['japanese'])
 
@@ -442,10 +453,16 @@ class SmartImportService:
                     all_matches.append(match)
                     seen_ids.add(match['id'])
 
+            # If we got results, stop
+            if len(all_matches) >= 3:
+                self.search_cache[cache_key] = [dict(m) for m in all_matches]
+                return all_matches, False
+
         # Strategy 4: Try cleaned-up English title
-        if len(all_matches) < 3 and titles.get('english'):
+        # ONLY if we have NO matches yet
+        if len(all_matches) == 0 and titles.get('english'):
             cleaned = self._clean_title_for_search(titles['english'])
-            if cleaned != titles['english']:
+            if cleaned and cleaned != titles['english']:
                 self._rate_limit_wait()
                 matches = self.anilist_client.search_anime(cleaned)
 
@@ -454,8 +471,9 @@ class SmartImportService:
                         all_matches.append(match)
                         seen_ids.add(match['id'])
 
-        # Strategy 5: Try Chinese title as last resort
-        if len(all_matches) < 2 and titles.get('chinese'):
+        # Strategy 5: Try Chinese title as ABSOLUTE last resort
+        # ONLY if we still have NO matches
+        if len(all_matches) == 0 and titles.get('chinese'):
             chinese = titles['chinese']
             # Only if it looks like it might be searchable (has some Latin chars)
             if any(c.isascii() and c.isalpha() for c in chinese):

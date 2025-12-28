@@ -1,6 +1,7 @@
 """AniList API client for fetching anime data."""
 
 import requests
+import time
 from typing import List, Dict, Optional
 
 
@@ -13,16 +14,43 @@ class AniListClient:
         """Initialize AniList client. No API key required!"""
         self.session = requests.Session()
 
-    def _make_request(self, query: str, variables: dict = None) -> Optional[dict]:
-        """Make a GraphQL request to AniList."""
+    def _make_request(self, query: str, variables: dict = None, retry_count: int = 0) -> Optional[dict]:
+        """
+        Make a GraphQL request to AniList with retry logic for rate limiting.
+
+        Args:
+            query: GraphQL query string
+            variables: Query variables
+            retry_count: Current retry attempt (internal use)
+
+        Returns:
+            Response data or None if failed
+        """
+        max_retries = 3
+        base_delay = 5  # Start with 5 second delay for 429 errors
+
         try:
             response = self.session.post(
                 self.API_URL,
                 json={'query': query, 'variables': variables or {}},
                 timeout=10
             )
+
+            # Handle rate limiting (429)
+            if response.status_code == 429:
+                if retry_count < max_retries:
+                    # Exponential backoff: 5s, 10s, 20s
+                    delay = base_delay * (2 ** retry_count)
+                    print(f"Rate limit hit! Waiting {delay} seconds before retry {retry_count + 1}/{max_retries}...")
+                    time.sleep(delay)
+                    return self._make_request(query, variables, retry_count + 1)
+                else:
+                    print(f"AniList API error: Rate limit exceeded after {max_retries} retries")
+                    return None
+
             response.raise_for_status()
             return response.json()
+
         except requests.RequestException as e:
             print(f"AniList API error: {e}")
             return None
