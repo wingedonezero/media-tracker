@@ -31,6 +31,7 @@ class SmartImportService:
     MIN_CONFIDENCE = 0.4  # Only include matches with 40%+ confidence
 
     # Comprehensive technical keywords to filter out
+    # These are UNAMBIGUOUS technical terms that should NEVER appear in anime titles
     TECHNICAL_KEYWORDS = [
         # Video formats
         'BDMV', 'DVDISO', 'DVDMV', 'BluRay', 'Blu-ray', 'BD-BOX', 'BDISO',
@@ -56,15 +57,20 @@ class SmartImportService:
         # Regions
         'R1', 'R2', 'R2J', 'R1US', 'USA', 'JPN', 'JP', 'NTSC', 'PAL',
 
-        # Release info
-        'Fin', 'OVA', 'OAD', 'Special', 'Movie', 'MOVIE',
-        'Remux', 'Encode', 'Rip', 'Source',
+        # Release info (ONLY unambiguous ones)
+        'Fin', 'Remux', 'Encode', 'Rip', 'Source',
 
         # Common uploader tags
         'Nyaa', 'U2', 'ADC', 'Share', 'Self-Rip', 'Self-Purchase',
 
         # Chinese/Japanese indicators that aren't titles
         '自抓', '自购', '感谢', 'thanks', 'Thanks'
+    ]
+
+    # Ambiguous keywords that might appear in anime titles
+    # Only filter if they appear as standalone words
+    AMBIGUOUS_KEYWORDS = [
+        'OVA', 'OAD', 'Special', 'Movie', 'MOVIE', 'TV'
     ]
 
     def __init__(self, anilist_client, db_manager):
@@ -246,15 +252,38 @@ class SmartImportService:
 
     def _looks_like_technical(self, text: str) -> bool:
         """Check if text looks like technical metadata."""
-        # Check against all technical keywords
-        text_lower = text.lower()
+        if not text or len(text) <= 1:
+            return True
 
-        # Exact or partial match
+        text_lower = text.lower().strip()
+
+        # Check for unambiguous technical keywords
         for keyword in self.TECHNICAL_KEYWORDS:
             if keyword.lower() in text_lower:
                 return True
 
-        # Check for patterns
+        # Check for ambiguous keywords - only filter if:
+        # 1. The entire text is JUST the keyword (like "[OVA]")
+        # 2. OR it's a short bracket with ONLY the keyword + numbers (like "[OVA 1-3]")
+        for keyword in self.AMBIGUOUS_KEYWORDS:
+            keyword_lower = keyword.lower()
+
+            # If the text is EXACTLY the keyword (case-insensitive)
+            if text_lower == keyword_lower:
+                return True
+
+            # If it's short and starts/ends with the keyword + numbers/punctuation
+            # e.g., "OVA 1-3", "MOVIE 2", "Special Edition"
+            if len(text) < 20:  # Short brackets are more likely technical
+                # Check if it's mostly the keyword + technical stuff
+                words = text_lower.split()
+                if words and words[0] == keyword_lower:
+                    # First word is the keyword, check if rest is technical
+                    rest = ' '.join(words[1:])
+                    if not rest or re.match(r'^[\d\-\s×x\.]+$', rest):
+                        return True
+
+        # Check for technical patterns
         patterns = [
             r'\d+p$',  # Ends with resolution like 1080p
             r'\d+i$',  # Ends with resolution like 480i
