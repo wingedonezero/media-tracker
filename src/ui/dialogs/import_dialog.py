@@ -447,6 +447,7 @@ class ImportDialog(QDialog):
     def add_matches_to_db(self, matches: List[dict]) -> int:
         """Add matches to database. Returns count of added items."""
         added_count = 0
+        added_ids = []
 
         for match in matches:
             try:
@@ -463,8 +464,13 @@ class ImportDialog(QDialog):
 
                 self.db_manager.add_item(media_item)
                 added_count += 1
+                added_ids.append(match.get('id'))
             except Exception as e:
                 print(f"Failed to add {match.get('title')}: {e}")
+
+        # Mark as added in import session to prevent duplicate searches
+        if added_ids:
+            self.import_service.mark_as_added(added_ids)
 
         return added_count
 
