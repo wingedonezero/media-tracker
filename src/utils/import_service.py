@@ -28,9 +28,10 @@ class SmartImportService:
     RATE_LIMIT_DELAY = 1.0
 
     # Minimum confidence threshold (0-1)
-    MIN_CONFIDENCE = 0.4  # Only include matches with 40%+ confidence
+    MIN_CONFIDENCE = 0.35  # Only include matches with 35%+ confidence
 
     # Comprehensive technical keywords to filter out
+    # These are UNAMBIGUOUS technical terms that should NEVER appear in anime titles
     TECHNICAL_KEYWORDS = [
         # Video formats
         'BDMV', 'DVDISO', 'DVDMV', 'BluRay', 'Blu-ray', 'BD-BOX', 'BDISO',
@@ -56,15 +57,24 @@ class SmartImportService:
         # Regions
         'R1', 'R2', 'R2J', 'R1US', 'USA', 'JPN', 'JP', 'NTSC', 'PAL',
 
-        # Release info
-        'Fin', 'OVA', 'OAD', 'Special', 'Movie', 'MOVIE',
-        'Remux', 'Encode', 'Rip', 'Source',
+        # Release info (ONLY unambiguous ones)
+        'Fin', 'Remux', 'Encode', 'Rip', 'Source',
 
-        # Common uploader tags
+        # Common uploader tags and groups
         'Nyaa', 'U2', 'ADC', 'Share', 'Self-Rip', 'Self-Purchase',
+        'VCB-Studio', 'VCB', 'TSDM', 'Kamigami', 'ANK-RAWS',
+        'philosophy-raws', 'kakeruSMC', 'Lupin the Nerd',
+        'taskforce', 'Ioroid', 'NAN0', 'CTM', 'Bikko',
 
         # Chinese/Japanese indicators that aren't titles
-        '自抓', '自购', '感谢', 'thanks', 'Thanks'
+        '自抓', '自购', '感谢', 'thanks', 'Thanks', '台版',
+        '自扫', '合集', '修正', '整合'
+    ]
+
+    # Ambiguous keywords that might appear in anime titles
+    # Only filter if they appear as standalone words
+    AMBIGUOUS_KEYWORDS = [
+        'OVA', 'OAD', 'Special', 'Movie', 'MOVIE', 'TV'
     ]
 
     def __init__(self, anilist_client, db_manager):
@@ -183,24 +193,26 @@ class SmartImportService:
             second = non_technical_brackets[1].strip()
             # If it contains mostly Latin characters, it's probably English/Romaji
             if self._is_latin_text(second):
-                titles['english'] = second
-                titles['romaji'] = second
+                titles['english'] = self._clean_extracted_title(second)
+                titles['romaji'] = self._clean_extracted_title(second)
 
         # Third bracket is usually Japanese
         if len(non_technical_brackets) >= 3:
             third = non_technical_brackets[2].strip()
             # If it contains Japanese characters
             if self._contains_japanese(third):
-                titles['japanese'] = third
+                titles['japanese'] = self._clean_extracted_title(third)
 
         # Look for better English names in later brackets
         for i in range(1, min(len(non_technical_brackets), 5)):
             text = non_technical_brackets[i].strip()
             if self._is_latin_text(text) and not self._looks_like_technical(text):
                 if not titles['english'] or len(text) > len(titles['english']):
-                    titles['english'] = text
-                    if not titles['romaji']:
-                        titles['romaji'] = text
+                    cleaned = self._clean_extracted_title(text)
+                    if cleaned:  # Only use if cleaning didn't remove everything
+                        titles['english'] = cleaned
+                        if not titles['romaji']:
+                            titles['romaji'] = cleaned
 
         return titles
 
@@ -225,6 +237,28 @@ class SmartImportService:
         cleaned = ' '.join(cleaned.split())
         return cleaned.strip() if len(cleaned) > 2 else ''
 
+    def _clean_extracted_title(self, title: str) -> str:
+        """Clean extracted title by removing trailing junk markers."""
+        if not title:
+            return title
+
+        # Remove trailing Chinese technical markers
+        junk_suffixes = ['自抓', '自购', '感谢', '台版', '⾃抓', '⾃购', '合集', '修正', '整合']
+        for suffix in junk_suffixes:
+            if title.endswith(suffix):
+                title = title[:-len(suffix)].strip()
+
+        # Remove trailing @uploader patterns
+        title = re.sub(r'\s*@[\w\-]+$', '', title)
+
+        # Remove trailing uploader/group tags in parentheses or brackets
+        title = re.sub(r'\s*[\(\[][\w\-\s]+@[\w\-]+[\)\]]$', '', title)
+
+        # Remove trailing group names
+        title = re.sub(r'\s*(?:VCB-Studio|TSDM|Kamigami).*$', '', title, flags=re.IGNORECASE)
+
+        return title.strip()
+
     def _is_latin_text(self, text: str) -> bool:
         """Check if text is mostly Latin characters."""
         if not text:
@@ -246,15 +280,65 @@ class SmartImportService:
 
     def _looks_like_technical(self, text: str) -> bool:
         """Check if text looks like technical metadata."""
-        # Check against all technical keywords
-        text_lower = text.lower()
+        if not text or len(text) <= 1:
+            return True
 
-        # Exact or partial match
+        text_lower = text.lower().strip()
+
+        # Check for unambiguous technical keywords
+        # BUT: Don't filter if it's a long text with trailing junk
+        # (like "Some Anime Title 自抓" - the title is valid, just has suffix)
+        has_substantial_content = len(text) > 10 and any(c.isalpha() for c in text[:10])
+
         for keyword in self.TECHNICAL_KEYWORDS:
-            if keyword.lower() in text_lower:
+            keyword_lower = keyword.lower()
+            if keyword_lower in text_lower:
+                # If it's at the end and we have substantial content, don't filter
+                # (we'll clean it later)
+                if has_substantial_content and (
+                    text_lower.endswith(keyword_lower) or
+                    text_lower.endswith(keyword_lower + ' ')
+                ):
+                    continue  # Don't filter, will be cleaned later
+                # Otherwise, filter it out
                 return True
 
-        # Check for patterns
+        # Check for ambiguous keywords - only filter if:
+        # 1. The entire text is JUST the keyword (like "[OVA]")
+        # 2. OR it's a short bracket with ONLY the keyword + numbers (like "[OVA 1-3]")
+        for keyword in self.AMBIGUOUS_KEYWORDS:
+            keyword_lower = keyword.lower()
+
+            # If the text is EXACTLY the keyword (case-insensitive)
+            if text_lower == keyword_lower:
+                return True
+
+            # If it's short and starts/ends with the keyword + numbers/punctuation
+            # e.g., "OVA 1-3", "MOVIE 2", "Special Edition"
+            if len(text) < 20:  # Short brackets are more likely technical
+                # Check if it's mostly the keyword + technical stuff
+                words = text_lower.split()
+                if words and words[0] == keyword_lower:
+                    # First word is the keyword, check if rest is technical
+                    rest = ' '.join(words[1:])
+                    if not rest or re.match(r'^[\d\-\s×x\.]+$', rest):
+                        return True
+
+        # Check for uploader/group names (contain @ or common patterns)
+        # BUT: Allow if there's substantial content that can be cleaned
+        if '@' in text:
+            # If it has substantial real content before the @, allow it (will be cleaned)
+            if has_substantial_content:
+                # Check if @ is not at the beginning
+                at_pos = text.index('@')
+                if at_pos > 5:  # Has content before @
+                    pass  # Will be cleaned later
+                else:
+                    return True  # Filter it out
+            else:
+                return True
+
+        # Check for technical patterns
         patterns = [
             r'\d+p$',  # Ends with resolution like 1080p
             r'\d+i$',  # Ends with resolution like 480i
@@ -262,6 +346,8 @@ class SmartImportService:
             r'disc?\s*[×x]\s*\d+',  # Disc count
             r'^\d{3,4}$',  # Just numbers
             r'bd[×x]\d+',  # BD count
+            r'rev$',  # Revision indicator
+            r'^\[.+\]$',  # Entire text is bracketed (uploader tag)
         ]
 
         for pattern in patterns:
