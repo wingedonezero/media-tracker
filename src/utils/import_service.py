@@ -91,6 +91,14 @@ class SmartImportService:
         # Track AniList IDs added in this import session
         self.added_in_session: Set[int] = set()
 
+        # Initialize offline matcher (optional, graceful degradation if not available)
+        try:
+            from utils.offline_anime_matcher import OfflineAnimeMatcher
+            self.offline_matcher = OfflineAnimeMatcher()
+        except Exception as e:
+            print(f"Offline matcher not available: {e}")
+            self.offline_matcher = None
+
     def parse_ods_file(self, file_path: str) -> List[str]:
         """Parse ODS file and extract entries."""
         entries = []
@@ -398,6 +406,7 @@ class SmartImportService:
     def search_anime_smart(self, titles: Dict[str, str]) -> Tuple[List[Dict], bool]:
         """
         Search for anime using multiple strategies.
+        First tries offline database (fast, no rate limits), then falls back to API search.
         Returns (list of matches, was_cached).
         """
         # Check cache first
@@ -410,6 +419,35 @@ class SmartImportService:
         all_matches = []
         seen_ids = set()
 
+        # STRATEGY 0: Try offline database first (if available)
+        if self.offline_matcher and self.offline_matcher.loaded:
+            try:
+                offline_matches = self.offline_matcher.match_titles(titles, min_score=80)
+
+                if offline_matches:
+                    # Fetch full data from AniList for matched IDs
+                    # Take top 5 matches to avoid too many API calls
+                    for anilist_id, offline_confidence, anime_data, title_type in offline_matches[:5]:
+                        if anilist_id in seen_ids:
+                            continue
+
+                        # Fetch full anime data from AniList
+                        self._rate_limit_wait()
+                        anime_info = self.anilist_client.get_anime_details(anilist_id)
+
+                        if anime_info:
+                            all_matches.append(anime_info)
+                            seen_ids.add(anilist_id)
+
+                    # If offline matching found good results, use them
+                    if all_matches:
+                        self.search_cache[cache_key] = [dict(m) for m in all_matches]
+                        return all_matches, False
+
+            except Exception as e:
+                print(f"Offline matching failed: {e}, falling back to API search")
+
+        # FALLBACK: Regular API-based search strategies
         # Strategy 1: Try English/Romaji title
         if titles.get('english'):
             self._rate_limit_wait()
@@ -507,10 +545,15 @@ class SmartImportService:
         title = ' '.join(title.split())
         return title.strip()
 
-    def calculate_confidence(self, titles: Dict[str, str], match: Dict) -> float:
+    def calculate_confidence(self, titles: Dict[str, str], match: Dict, matched_title_types: List[str] = None) -> float:
         """
         Calculate confidence score for a match (0-1).
         Higher is better.
+
+        Args:
+            titles: Parsed titles from entry
+            match: AniList match data
+            matched_title_types: List of title types that matched (e.g., ['english', 'japanese'])
         """
         confidence = 0.0
 
@@ -526,17 +569,34 @@ class SmartImportService:
             'japanese': (titles.get('japanese') or '').lower()
         }
 
-        # Exact match on English = 1.0
-        if search_titles['english'] and search_titles['english'] == match_titles['english']:
-            confidence = 1.0
-        # Exact match on Romaji = 0.95
-        elif search_titles['romaji'] and search_titles['romaji'] == match_titles['romaji']:
-            confidence = 0.95
-        # Exact match on Japanese = 0.9
-        elif search_titles['japanese'] and search_titles['japanese'] == match_titles['native']:
-            confidence = 0.9
-        # Partial match
-        else:
+        # Track which title types matched
+        matches_found = []
+
+        # Check exact matches
+        english_match = search_titles['english'] and search_titles['english'] == match_titles['english']
+        romaji_match = search_titles['romaji'] and search_titles['romaji'] == match_titles['romaji']
+        japanese_match = search_titles['japanese'] and search_titles['japanese'] == match_titles['native']
+
+        if english_match:
+            matches_found.append('english')
+            confidence = max(confidence, 0.95)
+        if romaji_match:
+            matches_found.append('romaji')
+            confidence = max(confidence, 0.90)
+        if japanese_match:
+            matches_found.append('japanese')
+            confidence = max(confidence, 0.90)
+
+        # BONUS: If BOTH English AND Japanese match, this is VERY strong signal
+        if english_match and japanese_match:
+            confidence = 1.0  # Maximum confidence!
+
+        # BONUS: If English/Romaji AND Japanese match
+        elif (english_match or romaji_match) and japanese_match:
+            confidence = 0.98  # Nearly perfect
+
+        # If no exact matches, try partial matching
+        if confidence == 0:
             # Check if any search title is contained in any match title
             for s_title in search_titles.values():
                 if not s_title:
@@ -552,6 +612,10 @@ class SmartImportService:
                     if s_words and m_words:
                         overlap = len(s_words & m_words) / len(s_words | m_words)
                         confidence = max(confidence, overlap * 0.8)
+
+        # Store which titles matched (useful for debugging)
+        if hasattr(match, '__setitem__'):
+            match['_matched_title_types'] = matches_found
 
         return confidence
 
