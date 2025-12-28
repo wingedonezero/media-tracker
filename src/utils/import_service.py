@@ -441,33 +441,36 @@ class SmartImportService:
         all_matches = []
         seen_ids = set()
 
-        # STRATEGY 0: Try offline database first (if available)
+        # STRATEGY 0: Try offline database as "spell checker" (if available)
+        # Use it to find the BEST title variants to search with, not for final results
         if self.offline_matcher and self.offline_matcher.loaded:
             try:
                 offline_matches = self.offline_matcher.match_titles(titles, min_score=85)
 
                 if offline_matches:
-                    # Only fetch top 2-3 matches to keep it fast
-                    # If top match has very high confidence (95+), only fetch that one
-                    top_confidence = offline_matches[0][1] if offline_matches else 0
-                    num_to_fetch = 1 if top_confidence >= 0.95 else min(3, len(offline_matches))
+                    # Get the best matched title from offline DB
+                    # This is our "cleaned" title to search AniList with
+                    best_match = offline_matches[0]  # (anilist_id, confidence, anime_data, title_type)
+                    _, confidence, anime_data, _ = best_match
 
-                    for anilist_id, offline_confidence, anime_data, title_type in offline_matches[:num_to_fetch]:
-                        if anilist_id in seen_ids:
-                            continue
+                    # Extract the best title variant from offline DB
+                    cleaned_title = anime_data.get('title', '')
 
-                        # Fetch full anime data from AniList
+                    if cleaned_title and confidence >= 0.85:
+                        # Use this cleaned title to SEARCH AniList (not fetch by ID)
                         self._rate_limit_wait()
-                        anime_info = self.anilist_client.get_anime_details(anilist_id)
+                        year = self._extract_year(cleaned_title)
+                        matches = self.anilist_client.search_anime(cleaned_title, year)
 
-                        if anime_info:
-                            all_matches.append(anime_info)
-                            seen_ids.add(anilist_id)
+                        for match in matches:
+                            if match['id'] not in seen_ids:
+                                all_matches.append(match)
+                                seen_ids.add(match['id'])
 
-                    # If offline matching found good results, use them
-                    if all_matches:
-                        self.search_cache[cache_key] = [dict(m) for m in all_matches]
-                        return all_matches, False
+                        # If offline DB helped us find good results, use them
+                        if all_matches:
+                            self.search_cache[cache_key] = [dict(m) for m in all_matches]
+                            return all_matches, False
 
             except Exception as e:
                 print(f"Offline matching failed: {e}, falling back to API search")
