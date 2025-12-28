@@ -425,6 +425,62 @@ class SmartImportService:
             time.sleep(self.RATE_LIMIT_DELAY - elapsed)
         self.last_request_time = time.time()
 
+    def _filter_strict_matches(self, search_title: str, matches: List[Dict]) -> List[Dict]:
+        """
+        Strictly filter matches to remove false positives.
+        For short titles (1-2 words), only keep very close matches.
+        """
+        if not search_title or not matches:
+            return matches
+
+        from rapidfuzz import fuzz
+
+        search_lower = search_title.lower().strip()
+        search_words = search_lower.split()
+        search_word_count = len(search_words)
+
+        filtered = []
+
+        for match in matches:
+            match_title = (match.get('title') or '').lower().strip()
+            romaji_title = (match.get('romaji_title') or '').lower().strip()
+            native_title = (match.get('native_title') or '').lower().strip()
+
+            # Check all title variants
+            for title_variant in [match_title, romaji_title, native_title]:
+                if not title_variant:
+                    continue
+
+                variant_words = title_variant.split()
+                variant_word_count = len(variant_words)
+
+                # For short search terms (1-2 words), be VERY strict
+                if search_word_count <= 2:
+                    # Word count must be similar (within 1 word)
+                    if abs(variant_word_count - search_word_count) > 1:
+                        continue
+
+                    # Calculate similarity ratio
+                    ratio = fuzz.ratio(search_lower, title_variant)
+
+                    # For very short titles (1 word), require near-perfect match
+                    if search_word_count == 1:
+                        if ratio >= 85:  # "AIR" vs "AIR" = 100, "AIR" vs "Airs" = 75
+                            filtered.append(match)
+                            break
+                    # For 2-word titles, require high similarity
+                    elif ratio >= 80:
+                        filtered.append(match)
+                        break
+                else:
+                    # For longer titles (3+ words), be more lenient
+                    ratio = fuzz.ratio(search_lower, title_variant)
+                    if ratio >= 70:
+                        filtered.append(match)
+                        break
+
+        return filtered
+
     def search_anime_smart(self, titles: Dict[str, str]) -> Tuple[List[Dict], bool]:
         """
         Search for anime using multiple strategies.
@@ -451,7 +507,7 @@ class SmartImportService:
                     # Get the best matched title from offline DB
                     # This is our "cleaned" title to search AniList with
                     best_match = offline_matches[0]  # (anilist_id, confidence, anime_data, title_type)
-                    _, confidence, anime_data, _ = best_match
+                    anilist_id, confidence, anime_data, _ = best_match
 
                     # Extract the best title variant from offline DB
                     cleaned_title = anime_data.get('title', '')
@@ -462,10 +518,24 @@ class SmartImportService:
                         year = self._extract_year(cleaned_title)
                         matches = self.anilist_client.search_anime(cleaned_title, year)
 
-                        for match in matches:
-                            if match['id'] not in seen_ids:
-                                all_matches.append(match)
-                                seen_ids.add(match['id'])
+                        # Apply strict filtering to remove false positives
+                        matches = self._filter_strict_matches(cleaned_title, matches)
+
+                        if matches:
+                            # For the BEST match, fetch all related content (seasons, OVAs, movies)
+                            best_result = matches[0]
+                            best_id = best_result.get('id')
+
+                            if best_id:
+                                self._rate_limit_wait()
+                                # Get main anime + all relations
+                                related_anime = self.anilist_client.get_anime_with_relations(best_id)
+
+                                # Add all related content
+                                for anime in related_anime:
+                                    if anime['id'] not in seen_ids:
+                                        all_matches.append(anime)
+                                        seen_ids.add(anime['id'])
 
                         # If offline DB helped us find good results, use them
                         if all_matches:
@@ -482,13 +552,27 @@ class SmartImportService:
             year = self._extract_year(titles['english'])
             matches = self.anilist_client.search_anime(titles['english'], year)
 
+            # Apply strict filtering for short titles
+            matches = self._filter_strict_matches(titles['english'], matches)
+
             for match in matches:
                 if match['id'] not in seen_ids:
                     all_matches.append(match)
                     seen_ids.add(match['id'])
 
-            # If we got good results, stop here to save API calls
-            if len(all_matches) >= 5:
+            # If we got a good match, fetch relations
+            if all_matches:
+                best_id = all_matches[0].get('id')
+                if best_id:
+                    self._rate_limit_wait()
+                    related_anime = self.anilist_client.get_anime_with_relations(best_id)
+
+                    # Add all related content
+                    for anime in related_anime:
+                        if anime['id'] not in seen_ids:
+                            all_matches.append(anime)
+                            seen_ids.add(anime['id'])
+
                 self.search_cache[cache_key] = [dict(m) for m in all_matches]
                 return all_matches, False
 

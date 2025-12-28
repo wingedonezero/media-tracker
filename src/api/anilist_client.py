@@ -147,6 +147,98 @@ class AniListClient:
             'format': item.get('format')
         }
 
+    def get_anime_with_relations(self, anime_id: int) -> List[Dict]:
+        """
+        Get anime and all its related content (sequels, prequels, side stories, etc.).
+        Returns list with main anime first, followed by all related anime.
+        """
+        graphql_query = '''
+        query ($id: Int) {
+            Media(id: $id, type: ANIME) {
+                id
+                title {
+                    romaji
+                    english
+                    native
+                }
+                seasonYear
+                description
+                coverImage {
+                    large
+                }
+                episodes
+                format
+                relations {
+                    edges {
+                        relationType
+                        node {
+                            id
+                            type
+                            title {
+                                romaji
+                                english
+                                native
+                            }
+                            seasonYear
+                            description
+                            coverImage {
+                                large
+                            }
+                            episodes
+                            format
+                        }
+                    }
+                }
+            }
+        }
+        '''
+
+        data = self._make_request(graphql_query, {'id': anime_id})
+        if not data or 'data' not in data:
+            return []
+
+        results = []
+        main_item = data['data']['Media']
+
+        # Add main anime first
+        main_title = main_item['title'].get('english') or main_item['title'].get('romaji')
+        results.append({
+            'id': main_item.get('id'),
+            'title': main_title,
+            'native_title': main_item['title'].get('native'),
+            'romaji_title': main_item['title'].get('romaji'),
+            'year': main_item.get('seasonYear'),
+            'overview': self._clean_description(main_item.get('description')),
+            'poster_url': main_item.get('coverImage', {}).get('large'),
+            'episodes': main_item.get('episodes'),
+            'format': main_item.get('format'),
+            'relation_type': 'MAIN'
+        })
+
+        # Add all related anime (sequels, prequels, side stories, etc.)
+        if main_item.get('relations') and main_item['relations'].get('edges'):
+            for edge in main_item['relations']['edges']:
+                node = edge.get('node')
+                relation_type = edge.get('relationType')
+
+                # Only include anime (not manga, novels, etc.)
+                if node and node.get('type') == 'ANIME':
+                    related_title = node['title'].get('english') or node['title'].get('romaji')
+                    results.append({
+                        'id': node.get('id'),
+                        'title': related_title,
+                        'native_title': node['title'].get('native'),
+                        'romaji_title': node['title'].get('romaji'),
+                        'year': node.get('seasonYear'),
+                        'overview': self._clean_description(node.get('description')),
+                        'poster_url': node.get('coverImage', {}).get('large'),
+                        'episodes': node.get('episodes'),
+                        'format': node.get('format'),
+                        'relation_type': relation_type  # SEQUEL, PREQUEL, SIDE_STORY, etc.
+                    })
+
+        return results
+
     @staticmethod
     def _clean_description(description: str) -> str:
         """Remove HTML tags from description."""
