@@ -16,7 +16,8 @@ from database.models import MediaItem
 class ImportThread(QThread):
     """Thread for running import in background."""
     progress_updated = pyqtSignal(int, int, str)  # current, total, entry
-    import_finished = pyqtSignal(list)  # results
+    result_ready = pyqtSignal(object)  # individual ImportResult as it's processed
+    import_finished = pyqtSignal()  # signals completion (no data needed, already have results)
     import_error = pyqtSignal(str)  # error message
 
     def __init__(self, import_service, file_path):
@@ -29,15 +30,20 @@ class ImportThread(QThread):
         try:
             results = self.import_service.import_file(
                 self.file_path,
-                progress_callback=self.progress_callback
+                progress_callback=self.progress_callback,
+                result_callback=self.result_callback
             )
-            self.import_finished.emit(results)
+            self.import_finished.emit()
         except Exception as e:
             self.import_error.emit(str(e))
 
     def progress_callback(self, current, total, entry):
         """Progress callback."""
         self.progress_updated.emit(current, total, entry)
+
+    def result_callback(self, result):
+        """Result callback - called for each processed entry."""
+        self.result_ready.emit(result)
 
 
 class ImportDialog(QDialog):
@@ -228,6 +234,7 @@ class ImportDialog(QDialog):
         # Start import thread
         self.import_thread = ImportThread(self.import_service, self.file_path)
         self.import_thread.progress_updated.connect(self.on_progress_updated)
+        self.import_thread.result_ready.connect(self.on_result_ready)  # NEW: incremental results
         self.import_thread.import_finished.connect(self.on_import_finished)
         self.import_thread.import_error.connect(self.on_import_error)
         self.import_thread.start()
@@ -238,17 +245,21 @@ class ImportDialog(QDialog):
         self.progress_bar.setValue(progress)
         self.status_label.setText(f"Processing {current}/{total}: {entry}...")
 
-    def on_import_finished(self, results: List[ImportResult]):
+    def on_result_ready(self, result: ImportResult):
+        """Handle individual result as it's processed (incremental display)."""
+        # Add to results list
+        self.import_results.append(result)
+
+        # Add to tree immediately
+        self.add_result_to_tree(result, len(self.import_results) - 1)
+
+        # Update statistics incrementally
+        self.update_statistics(self.import_results)
+
+    def on_import_finished(self):
         """Handle import completion."""
-        self.import_results = results
         self.status_label.setText("Import complete!")
         self.progress_bar.setValue(100)
-
-        # Populate results tree
-        self.populate_results_tree(results)
-
-        # Update statistics
-        self.update_statistics(results)
 
         # Enable buttons
         self.import_button.setEnabled(True)
@@ -261,6 +272,74 @@ class ImportDialog(QDialog):
         self.status_label.setText(f"Error: {error_message}")
         self.import_button.setEnabled(True)
         QMessageBox.critical(self, "Import Error", f"Failed to import:\n{error_message}")
+
+    def add_result_to_tree(self, result: ImportResult, result_index: int):
+        """Add a single result to the tree (for incremental display)."""
+        # Create top-level item
+        item = QTreeWidgetItem()
+
+        # Status column with color
+        status_text = result.status.replace('_', ' ').title()
+        item.setText(0, status_text)
+
+        # Color code by status
+        if result.status == 'success':
+            item.setBackground(0, QBrush(QColor(200, 255, 200)))  # Light green
+        elif result.status == 'partial_duplicate':
+            item.setBackground(0, QBrush(QColor(255, 255, 200)))  # Light yellow
+        elif result.status == 'duplicate':
+            item.setBackground(0, QBrush(QColor(255, 230, 200)))  # Light orange
+        elif result.status == 'no_match':
+            item.setBackground(0, QBrush(QColor(255, 200, 200)))  # Light red
+        elif result.status == 'error':
+            item.setBackground(0, QBrush(QColor(255, 180, 180)))  # Red
+
+        # Original entry (truncated)
+        original_short = result.original_text[:80] + "..." if len(result.original_text) > 80 else result.original_text
+        item.setText(1, original_short)
+
+        # Parsed title
+        parsed_title = result.parsed_titles.get('english') or result.parsed_titles.get('romaji') or result.parsed_titles.get('japanese', '')
+        item.setText(2, parsed_title)
+
+        # Number of matches
+        item.setText(3, str(len(result.matches)))
+
+        # Confidence
+        if result.confidence > 0:
+            item.setText(4, f"{result.confidence:.0%}")
+
+        # Store result index in item
+        item.setData(0, Qt.ItemDataRole.UserRole, result_index)
+
+        # Add match children
+        for match in result.matches:
+            child = QTreeWidgetItem()
+            match_title = match.get('title', 'Unknown')
+            match_year = match.get('year', 'N/A')
+            confidence = match.get('_confidence', 0)
+
+            child.setText(0, "Match")
+            child.setText(1, f"{match_title} ({match_year})")
+            child.setText(2, match.get('romaji_title', ''))
+            child.setText(3, "")
+            child.setText(4, f"{confidence:.0%}")
+
+            # Store match data
+            child.setData(0, Qt.ItemDataRole.UserRole, match)
+
+            # Check if duplicate
+            is_dup, dup_desc = self.import_service.check_duplicate(match)
+            if is_dup:
+                child.setBackground(0, QBrush(QColor(255, 200, 200)))
+                child.setText(0, "Duplicate")
+                child.setToolTip(1, f"Already in database: {dup_desc}")
+
+            item.addChild(child)
+
+        # Add to tree and expand
+        self.results_tree.addTopLevelItem(item)
+        item.setExpanded(True)
 
     def populate_results_tree(self, results: List[ImportResult]):
         """Populate the results tree."""

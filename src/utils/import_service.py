@@ -578,10 +578,15 @@ class SmartImportService:
 
         return False, None
 
-    def import_file(self, file_path: str, progress_callback=None) -> List[ImportResult]:
+    def import_file(self, file_path: str, progress_callback=None, result_callback=None) -> List[ImportResult]:
         """
         Import anime from file.
         Returns list of ImportResult objects.
+
+        Args:
+            file_path: Path to Excel/ODS file
+            progress_callback: Optional callback(current, total, entry) for progress updates
+            result_callback: Optional callback(result) called for each processed entry
         """
         results = []
 
@@ -601,13 +606,16 @@ class SmartImportService:
                 raise Exception(f"Unsupported file format: {file_ext}")
         except Exception as e:
             # Return error result
-            results.append(ImportResult(
+            error_result = ImportResult(
                 original_text="",
                 parsed_titles={},
                 matches=[],
                 status='error',
                 message=f"Failed to parse file: {e}"
-            ))
+            )
+            results.append(error_result)
+            if result_callback:
+                result_callback(error_result)
             return results
 
         total_entries = len(entries)
@@ -621,13 +629,16 @@ class SmartImportService:
             titles = self.parse_titles_from_entry(entry)
 
             if not any(titles.values()):
-                results.append(ImportResult(
+                result = ImportResult(
                     original_text=entry,
                     parsed_titles=titles,
                     matches=[],
                     status='error',
                     message="Could not extract any titles from entry"
-                ))
+                )
+                results.append(result)
+                if result_callback:
+                    result_callback(result)
                 continue
 
             # Search for matches (checks cache first)
@@ -635,13 +646,16 @@ class SmartImportService:
                 matches, was_cached = self.search_anime_smart(titles)
 
                 if not matches:
-                    results.append(ImportResult(
+                    result = ImportResult(
                         original_text=entry,
                         parsed_titles=titles,
                         matches=[],
                         status='no_match',
                         message="No matches found on AniList"
-                    ))
+                    )
+                    results.append(result)
+                    if result_callback:
+                        result_callback(result)
                     continue
 
                 # Calculate confidence for each match
@@ -652,13 +666,16 @@ class SmartImportService:
                 matches = [m for m in matches if m.get('_confidence', 0) >= self.MIN_CONFIDENCE]
 
                 if not matches:
-                    results.append(ImportResult(
+                    result = ImportResult(
                         original_text=entry,
                         parsed_titles=titles,
                         matches=[],
                         status='no_match',
                         message=f"No matches with sufficient confidence (min {self.MIN_CONFIDENCE:.0%})"
-                    ))
+                    )
+                    results.append(result)
+                    if result_callback:
+                        result_callback(result)
                     continue
 
                 # Sort by confidence
@@ -697,23 +714,30 @@ class SmartImportService:
                         status = 'success'
                         message = f"Found {len(new_matches)} match(es)"
 
-                results.append(ImportResult(
+                result = ImportResult(
                     original_text=entry,
                     parsed_titles=titles,
                     matches=matches,
                     status=status,
                     message=message,
                     confidence=matches[0].get('_confidence', 0) if matches else 0
-                ))
+                )
+                results.append(result)
+                # Emit result immediately for live updates
+                if result_callback:
+                    result_callback(result)
 
             except Exception as e:
-                results.append(ImportResult(
+                result = ImportResult(
                     original_text=entry,
                     parsed_titles=titles,
                     matches=[],
                     status='error',
                     message=f"Search error: {e}"
-                ))
+                )
+                results.append(result)
+                if result_callback:
+                    result_callback(result)
 
         return results
 
