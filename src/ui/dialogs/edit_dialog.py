@@ -3,7 +3,7 @@
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
     QLineEdit, QSpinBox, QComboBox, QTextEdit, QPushButton,
-    QLabel, QListWidget, QMessageBox, QGroupBox
+    QLabel, QListWidget, QMessageBox, QGroupBox, QAbstractItemView
 )
 from PyQt6.QtCore import Qt, QTimer
 from database.models import MediaItem
@@ -74,10 +74,14 @@ class EditDialog(QDialog):
 
             self.search_results_list = QListWidget()
             self.search_results_list.setMaximumHeight(150)
+            # Enable multi-selection (Ctrl+Click, Shift+Click)
+            self.search_results_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
             self.search_results_list.itemDoubleClicked.connect(self.select_search_result)
+            self.search_results_list.itemSelectionChanged.connect(self.on_selection_changed)
 
             search_layout.addLayout(search_input_layout)
-            search_layout.addWidget(QLabel("Results appear as you type. Double-click to select:"))
+            self.selection_label = QLabel("Results appear as you type. Double-click or Ctrl+Click to select multiple:")
+            search_layout.addWidget(self.selection_label)
             search_layout.addWidget(self.search_results_list)
 
             search_group.setLayout(search_layout)
@@ -274,8 +278,21 @@ class EditDialog(QDialog):
         self.search_button.setEnabled(True)
         self.search_button.setText("Search")
 
+    def on_selection_changed(self):
+        """Handle selection change in search results list."""
+        if not self.item.id:  # Only for new items
+            selected_items = self.search_results_list.selectedItems()
+            count = len(selected_items)
+
+            if count == 0:
+                self.save_button.setText("Add")
+            elif count == 1:
+                self.save_button.setText("Add")
+            else:
+                self.save_button.setText(f"Add Selected ({count})")
+
     def select_search_result(self, list_item):
-        """Fill form with selected search result."""
+        """Fill form with selected search result (on double-click)."""
         index = self.search_results_list.row(list_item)
         if index < 0 or index >= len(self.search_results):
             return
@@ -323,8 +340,77 @@ class EditDialog(QDialog):
 
         return self.item
 
+    def get_selected_items(self) -> list:
+        """Get all selected search results as MediaItem objects.
+
+        Returns list of MediaItem objects, or empty list if no multi-selection.
+        Used for multi-select feature.
+        """
+        if self.item.id:  # Editing existing item, not multi-select
+            return []
+
+        selected_list_items = self.search_results_list.selectedItems()
+
+        if len(selected_list_items) <= 1:
+            return []  # Not multi-select
+
+        # Get form field values that apply to all items
+        status = self.status_combo.currentText()
+        quality_type = self.quality_combo.currentText().strip() or None
+        source = self.source_input.text().strip() or None
+        notes = self.notes_input.toPlainText().strip() or None
+
+        items = []
+        for list_item in selected_list_items:
+            index = self.search_results_list.row(list_item)
+            if index < 0 or index >= len(self.search_results):
+                continue
+
+            result = self.search_results[index]
+
+            # Create MediaItem from search result
+            item = MediaItem(media_type=self.media_type)
+            item.title = result['title']
+
+            # Set year
+            if result['year']:
+                try:
+                    item.year = int(result['year'])
+                except (ValueError, TypeError):
+                    item.year = None
+
+            # Fill native and romaji titles for anime
+            if self.media_type == "Anime":
+                item.native_title = result.get('native_title')
+                item.romaji_title = result.get('romaji_title')
+                item.anilist_id = result['id']
+            else:
+                item.tmdb_id = result['id']
+
+            # Set poster URL
+            item.poster_url = result.get('poster_url')
+
+            # Apply form values (same for all selected items)
+            item.status = status
+            item.quality_type = quality_type
+            item.source = source
+            item.notes = notes
+
+            items.append(item)
+
+        return items
+
     def accept(self):
         """Validate and accept the dialog."""
+        # Check if this is a multi-select operation
+        if not self.item.id:  # Only for new items
+            selected_items = self.search_results_list.selectedItems()
+            if len(selected_items) > 1:
+                # Multi-select mode: no need to validate title field
+                super().accept()
+                return
+
+        # Single item mode: validate title is filled
         if not self.title_input.text().strip():
             QMessageBox.warning(self, "Validation Error", "Title is required!")
             return

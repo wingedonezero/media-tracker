@@ -90,6 +90,83 @@ class DatabaseManager:
             conn.commit()
             return cursor.lastrowid
 
+    def add_items_batch(self, items: List[MediaItem], skip_duplicates: bool = True) -> dict:
+        """Add multiple items in a single transaction.
+
+        Args:
+            items: List of MediaItem objects to add
+            skip_duplicates: If True, skip items that already exist. If False, fail on duplicates.
+
+        Returns:
+            Dictionary with 'added', 'skipped', and 'errors' counts and lists
+        """
+        result = {
+            'added': 0,
+            'skipped': 0,
+            'errors': 0,
+            'added_items': [],
+            'skipped_items': [],
+            'error_items': []
+        }
+
+        if not items:
+            return result
+
+        conn = self.get_connection()
+        try:
+            # Begin explicit transaction
+            conn.execute("BEGIN TRANSACTION")
+            cursor = conn.cursor()
+
+            for item in items:
+                try:
+                    # Check for duplicates (using same transaction cursor)
+                    if self.check_duplicate_by_id(item, cursor=cursor):
+                        if skip_duplicates:
+                            result['skipped'] += 1
+                            result['skipped_items'].append(item.title)
+                            continue
+                        else:
+                            raise ValueError(f"Duplicate item: {item.title}")
+
+                    # Insert the item
+                    cursor.execute('''
+                        INSERT INTO media_items
+                        (title, native_title, romaji_title, year, media_type, status, quality_type, source, notes,
+                         tmdb_id, anilist_id, poster_url)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ''', (
+                        item.title, item.native_title, item.romaji_title, item.year, item.media_type, item.status,
+                        item.quality_type, item.source, item.notes,
+                        item.tmdb_id, item.anilist_id, item.poster_url
+                    ))
+
+                    result['added'] += 1
+                    result['added_items'].append(item.title)
+
+                except Exception as e:
+                    result['errors'] += 1
+                    result['error_items'].append(f"{item.title}: {str(e)}")
+                    # On error, rollback the entire transaction
+                    conn.rollback()
+                    raise
+
+            # Commit the transaction (all items added successfully)
+            conn.commit()
+
+        except Exception as e:
+            # Rollback on any error
+            try:
+                conn.rollback()
+            except:
+                pass
+            raise
+
+        finally:
+            conn.close()
+
+        return result
+
     def update_item(self, item: MediaItem):
         """Update an existing media item."""
         with self.get_connection() as conn:
@@ -227,6 +304,50 @@ class DatabaseManager:
             ''', (title, year, media_type))
             result = cursor.fetchone()
             return result['count'] > 0
+
+    def check_duplicate_by_id(self, item: MediaItem, cursor=None) -> bool:
+        """Check if item exists by API ID (tmdb_id/anilist_id) or title+year.
+
+        More robust duplicate detection for multi-select.
+
+        Args:
+            item: MediaItem to check
+            cursor: Optional cursor to use (for transactions). If None, creates new connection.
+        """
+        if cursor is None:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                return self._check_duplicate_by_id_impl(item, cursor)
+        else:
+            return self._check_duplicate_by_id_impl(item, cursor)
+
+    def _check_duplicate_by_id_impl(self, item: MediaItem, cursor) -> bool:
+        """Internal implementation of duplicate check."""
+        # First check by API ID
+        if item.media_type == "Anime" and item.anilist_id:
+            cursor.execute('''
+                SELECT COUNT(*) as count FROM media_items
+                WHERE anilist_id=? AND media_type=?
+            ''', (item.anilist_id, item.media_type))
+            result = cursor.fetchone()
+            if result['count'] > 0:
+                return True
+        elif item.tmdb_id:
+            cursor.execute('''
+                SELECT COUNT(*) as count FROM media_items
+                WHERE tmdb_id=? AND media_type=?
+            ''', (item.tmdb_id, item.media_type))
+            result = cursor.fetchone()
+            if result['count'] > 0:
+                return True
+
+        # Fallback to title+year check
+        cursor.execute('''
+            SELECT COUNT(*) as count FROM media_items
+            WHERE title=? AND year=? AND media_type=?
+        ''', (item.title, item.year, item.media_type))
+        result = cursor.fetchone()
+        return result['count'] > 0
 
     def count_items_with_quality_type(self, quality_type: str) -> int:
         """Count how many items are using a specific quality type."""
