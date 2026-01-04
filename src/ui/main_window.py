@@ -216,7 +216,7 @@ class MainWindow(QMainWindow):
         self.update_status_bar()
 
     def add_item(self):
-        """Add a new media item."""
+        """Add a new media item (or multiple items via multi-select)."""
         dialog = EditDialog(
             self.current_media_type,
             tmdb_client=self.tmdb_client,
@@ -229,23 +229,74 @@ class MainWindow(QMainWindow):
         dialog.status_combo.setCurrentText(self.current_status)
 
         if dialog.exec():
-            item = dialog.get_item()
+            # Check if multiple items were selected
+            selected_items = dialog.get_selected_items()
 
-            # Check for duplicates
-            if self.db.check_duplicate(item.title, item.year, item.media_type):
-                reply = QMessageBox.question(
-                    self,
-                    'Duplicate Found',
-                    f'"{item.title}" ({item.year}) already exists. Add anyway?',
-                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                    QMessageBox.StandardButton.No
-                )
-                if reply == QMessageBox.StandardButton.No:
-                    return
+            if selected_items:
+                # Multi-select mode: batch add with transaction safety
+                try:
+                    result = self.db.add_items_batch(selected_items, skip_duplicates=True)
 
-            self.db.add_item(item)
-            self.load_data()
-            self.statusBar().showMessage(f"Added: {item.title}", 3000)
+                    # Show detailed feedback
+                    message_parts = []
+                    if result['added'] > 0:
+                        message_parts.append(f"✓ Added {result['added']} item(s)")
+                    if result['skipped'] > 0:
+                        message_parts.append(f"⊘ Skipped {result['skipped']} duplicate(s)")
+                    if result['errors'] > 0:
+                        message_parts.append(f"✗ {result['errors']} error(s)")
+
+                    message = "\n".join(message_parts)
+
+                    if result['added'] > 0:
+                        self.load_data()
+
+                    # Show detailed results dialog
+                    details = []
+                    if result['added_items']:
+                        details.append("Added:\n  • " + "\n  • ".join(result['added_items']))
+                    if result['skipped_items']:
+                        details.append("\nSkipped (duplicates):\n  • " + "\n  • ".join(result['skipped_items']))
+
+                    QMessageBox.information(
+                        self,
+                        "Multi-Select Results",
+                        message + "\n\n" + "\n".join(details)
+                    )
+
+                    # Status bar message
+                    if result['added'] > 0:
+                        self.statusBar().showMessage(
+                            f"Added {result['added']} items ({result['skipped']} skipped)",
+                            5000
+                        )
+
+                except Exception as e:
+                    QMessageBox.critical(
+                        self,
+                        "Error",
+                        f"Failed to add items:\n{str(e)}\n\nNo items were added (transaction rolled back)."
+                    )
+
+            else:
+                # Single item mode
+                item = dialog.get_item()
+
+                # Check for duplicates
+                if self.db.check_duplicate(item.title, item.year, item.media_type):
+                    reply = QMessageBox.question(
+                        self,
+                        'Duplicate Found',
+                        f'"{item.title}" ({item.year}) already exists. Add anyway?',
+                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                        QMessageBox.StandardButton.No
+                    )
+                    if reply == QMessageBox.StandardButton.No:
+                        return
+
+                self.db.add_item(item)
+                self.load_data()
+                self.statusBar().showMessage(f"Added: {item.title}", 3000)
 
     def import_anime(self):
         """Import anime from Excel/ODS file."""
