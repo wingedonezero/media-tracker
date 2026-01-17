@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Video Sync GUI - Application Launcher
+# Media Tracker - Application Launcher
 # Runs the application in a terminal window so you can see any errors
 
 # Color codes for output
@@ -117,10 +117,10 @@ activate_venv() {
 # Function to run in current terminal
 run_in_current_terminal() {
     echo "========================================="
-    echo "Video Sync GUI"
+    echo "Media Tracker"
     echo "========================================="
     echo ""
-    echo -e "${BLUE}Starting application...${NC}"
+    echo -e "${BLUE}Starting Media Tracker...${NC}"
     echo -e "${YELLOW}Press Ctrl+C to exit${NC}"
     echo ""
 
@@ -151,7 +151,7 @@ main() {
 
     # Wrapper script for terminal emulators - ensures errors are shown
     # Note: GPU environment is set up in parent shell and inherited by subshells
-    WRAPPER_CMD="cd '$PROJECT_DIR' && source '$PROJECT_DIR/run.sh' && setup_rocm_environment && activate_venv && echo '=========================================' && echo 'Video Sync GUI' && echo '=========================================' && echo '' && echo 'Starting application...' && echo '' && python main.py 2>&1; EXIT_CODE=\$?; echo ''; if [ \$EXIT_CODE -eq 0 ]; then echo -e '${GREEN}Application exited normally${NC}'; else echo -e '${RED}Application exited with error code:' \$EXIT_CODE'${NC}'; fi; echo -e '${YELLOW}Press Enter to close...${NC}'; read"
+    WRAPPER_CMD="cd '$PROJECT_DIR' && source '$PROJECT_DIR/run.sh' && setup_rocm_environment && activate_venv && echo '=========================================' && echo 'Media Tracker' && echo '=========================================' && echo '' && echo 'Starting Media Tracker...' && echo '' && python main.py 2>&1; EXIT_CODE=\$?; echo ''; if [ \$EXIT_CODE -eq 0 ]; then echo -e '${GREEN}Application exited normally${NC}'; else echo -e '${RED}Application exited with error code:' \$EXIT_CODE'${NC}'; fi; echo -e '${YELLOW}Press Enter to close...${NC}'; read"
 
     # If running from a terminal, just run it
     if [ -t 0 ]; then

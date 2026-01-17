@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Video Sync GUI - Environment Setup Script
+# Media Tracker - Environment Setup Script
 # Interactive script for managing Python environment and dependencies
 
 # Color codes for output
@@ -15,15 +15,12 @@ NC='\033[0m' # No Color
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV_DIR="$PROJECT_DIR/.venv"
 VENV_PYTHON="$VENV_DIR/bin/python"
-PYTHON_AUDIO_SEPARATOR_REPO="audio-separator @ git+https://github.com/nomadkaraoke/python-audio-separator.git"
-PYTHON_AUDIO_SEPARATOR_GPU_REPO="audio-separator[gpu] @ git+https://github.com/nomadkaraoke/python-audio-separator.git"
-PYTHON_AUDIO_SEPARATOR_CPU_REPO="audio-separator[cpu] @ git+https://github.com/nomadkaraoke/python-audio-separator.git"
 
 # Function to show main menu
 show_menu() {
     echo ""
     echo "========================================="
-    echo "Video Sync GUI - Environment Setup"
+    echo "Media Tracker - Environment Setup"
     echo "========================================="
     echo ""
     echo -e "${BLUE}Project Directory:${NC} $PROJECT_DIR"
@@ -32,10 +29,10 @@ show_menu() {
     echo ""
     echo -e "  ${CYAN}1)${NC} Full Setup - Install Python 3.13 and all dependencies"
     echo -e "  ${CYAN}2)${NC} Update Libraries - Check for and install updates"
-    echo -e "  ${CYAN}3)${NC} Install Optional Dependencies (AI audio features)"
+    echo -e "  ${CYAN}3)${NC} Install Optional Dependencies (developer tools)"
     echo -e "  ${CYAN}4)${NC} Verify Dependencies - Check all packages are installed"
-    echo -e "  ${CYAN}5)${NC} Rebuild PyAV (FFmpeg subtitles support)"
-    echo -e "  ${CYAN}6)${NC} Download curated audio-separator models"
+    echo -e "  ${CYAN}5)${NC} Reinstall Dependencies (force reinstall)"
+    echo -e "  ${CYAN}6)${NC} Backup local database"
     echo -e "  ${CYAN}7)${NC} Exit"
     echo ""
     echo -n "Enter your choice [1-7]: "
@@ -175,104 +172,6 @@ venv_pip() {
     "$VENV_PYTHON" -m pip "$@"
 }
 
-get_audio_separator_model_dir() {
-    local settings_file="$PROJECT_DIR/settings.json"
-    local default_dir="$PROJECT_DIR/audio_separator_models"
-
-    if [ -f "$settings_file" ]; then
-        local configured_dir
-        configured_dir=$(python - <<PY
-import json
-from pathlib import Path
-
-settings = Path("$settings_file")
-try:
-    data = json.loads(settings.read_text(encoding="utf-8"))
-except Exception:
-    data = {}
-
-value = data.get("source_separation_model_dir")
-if isinstance(value, str) and value.strip():
-    print(value.strip())
-PY
-)
-        if [ -n "$configured_dir" ]; then
-            echo "$configured_dir"
-            return 0
-        fi
-    fi
-
-    echo "$default_dir"
-}
-
-download_audio_separator_models() {
-    echo ""
-    echo "========================================="
-    echo "Download Curated Audio-Separator Models"
-    echo "========================================="
-    echo ""
-
-    local model_dir
-    model_dir=$(get_audio_separator_model_dir)
-    mkdir -p "$model_dir"
-
-    echo -e "${BLUE}Model directory:${NC} $model_dir"
-    echo ""
-    echo "Models to download:"
-    echo "  • Demucs v4: htdemucs"
-    echo "  • Roformer: BandSplit SDR 1053"
-    echo "  • MDX23C: InstVoc HQ"
-    echo "  • MDX-Net: Kim Vocal 2"
-    echo "  • Bandit v2: Cinematic Multilang"
-    echo ""
-
-    local filenames=(
-        "955717e8-8726e21a.th"
-        "htdemucs.yaml"
-        "model_bs_roformer_ep_937_sdr_10.5309.ckpt"
-        "config_bs_roformer_ep_937_sdr_10.5309.yaml"
-        "MDX23C-8KFFT-InstVoc_HQ.ckpt"
-        "model_2_stem_full_band_8k.yaml"
-        "Kim_Vocal_2.onnx"
-        "checkpoint-multi_fixed.ckpt"
-        "config_dnr_bandit_v2_mus64.yaml"
-    )
-
-    local urls=(
-        "https://huggingface.co/Politrees/UVR_resources/resolve/main/models/Demucs/Demucs_v4/955717e8-8726e21a.th"
-        "https://raw.githubusercontent.com/Bebra777228/UVR_resources/refs/heads/main/UVR_resources/configs/demucs/htdemucs.yaml"
-        "https://huggingface.co/Politrees/UVR_resources/resolve/main/models/Roformer/BandSplit/model_bs_roformer_ep_937_sdr_10.5309.ckpt"
-        "https://raw.githubusercontent.com/Bebra777228/UVR_resources/refs/heads/main/UVR_resources/configs/Roformer/BandSplit/config_bs_roformer_ep_937_sdr_10.5309.yaml"
-        "https://huggingface.co/Politrees/UVR_resources/resolve/main/models/MDX23C/MDX23C-8KFFT-InstVoc_HQ.ckpt"
-        "https://raw.githubusercontent.com/Bebra777228/UVR_resources/refs/heads/main/UVR_resources/configs/MDX23C/model_2_stem_full_band_8k.yaml"
-        "https://huggingface.co/Politrees/UVR_resources/resolve/main/models/MDXNet/Kim_Vocal_2.onnx"
-        "https://huggingface.co/Politrees/UVR_resources/resolve/main/models/Bandit/Bandit_v2/checkpoint-multi_fixed.ckpt"
-        "https://raw.githubusercontent.com/Bebra777228/UVR_resources/refs/heads/main/UVR_resources/configs/Bandit/config_dnr_bandit_v2_mus64.yaml"
-    )
-
-    local count=${#filenames[@]}
-    for ((i=0; i<count; i++)); do
-        local filename="${filenames[$i]}"
-        local url="${urls[$i]}"
-        local target="$model_dir/$filename"
-
-        if [ -f "$target" ]; then
-            echo -e "${GREEN}✓ Already exists:${NC} $filename"
-            continue
-        fi
-
-        echo -e "${BLUE}Downloading:${NC} $filename"
-        if curl -L --fail -o "$target" "$url"; then
-            echo -e "${GREEN}✓ Downloaded:${NC} $filename"
-        else
-            echo -e "${RED}✗ Failed:${NC} $filename"
-            return 1
-        fi
-    done
-
-    echo ""
-    echo -e "${GREEN}✓ Curated models ready!${NC}"
-}
 
 # Function to check for updates
 check_updates() {
@@ -345,57 +244,37 @@ install_optional() {
         return 1
     fi
 
-    echo "Optional AI audio features (Audio Separator):"
-    echo "These enable AI-powered vocal/instrument separation"
-    echo "for better cross-language audio correlation."
+    echo "Optional developer tools for Media Tracker:"
+    echo "These are not required to run the app."
     echo ""
-    echo "Note: ROCm installs use the CPU extra for audio-separator"
-    echo "because GPU acceleration comes from the ROCm PyTorch build."
+    echo -e "  ${CYAN}1)${NC} Qt Designer helpers (pyqt6-tools)"
+    echo -e "  ${CYAN}2)${NC} Testing tools (pytest, pytest-qt)"
+    echo -e "  ${CYAN}3)${NC} All optional tools"
+    echo -e "  ${CYAN}4)${NC} Cancel"
     echo ""
-    echo "Select your hardware:"
-    echo ""
-    echo -e "  ${CYAN}1)${NC} NVIDIA GPU (CUDA)"
-    echo -e "  ${CYAN}2)${NC} AMD GPU (ROCm 6.4 - Stable)"
-    echo -e "  ${CYAN}3)${NC} AMD GPU (ROCm 7.1 - Latest/Nightly)"
-    echo -e "  ${CYAN}4)${NC} CPU only (slower but works everywhere)"
-    echo -e "  ${CYAN}5)${NC} Cancel"
-    echo ""
-    echo -n "Enter your choice [1-5]: "
-    read -r hw_choice
+    echo -n "Enter your choice [1-4]: "
+    read -r optional_choice
 
-    case $hw_choice in
+    case $optional_choice in
         1)
             echo ""
-            echo -e "${BLUE}Installing Audio Separator (NVIDIA CUDA)...${NC}"
-            echo -e "${YELLOW}Installing CUDA-enabled PyTorch (cu121)...${NC}"
-            venv_pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
-            venv_pip install "$PYTHON_AUDIO_SEPARATOR_GPU_REPO"
-            echo -e "${GREEN}✓ NVIDIA GPU support installed${NC}"
+            echo -e "${BLUE}Installing Qt Designer helpers...${NC}"
+            venv_pip install pyqt6-tools
+            echo -e "${GREEN}✓ Qt Designer helpers installed${NC}"
             ;;
         2)
             echo ""
-            echo -e "${BLUE}Installing Audio Separator (AMD ROCm 6.4 Stable - GPU via PyTorch)...${NC}"
-            venv_pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/rocm6.4
-            venv_pip install --upgrade onnxruntime
-            venv_pip install "$PYTHON_AUDIO_SEPARATOR_CPU_REPO"
-            echo -e "${GREEN}✓ AMD GPU (ROCm 6.4) support installed${NC}"
+            echo -e "${BLUE}Installing testing tools...${NC}"
+            venv_pip install pytest pytest-qt
+            echo -e "${GREEN}✓ Testing tools installed${NC}"
             ;;
         3)
             echo ""
-            echo -e "${BLUE}Installing Audio Separator (AMD ROCm 7.1 Nightly - GPU via PyTorch)...${NC}"
-            venv_pip install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/rocm7.1
-            venv_pip install --upgrade onnxruntime
-            venv_pip install "$PYTHON_AUDIO_SEPARATOR_CPU_REPO"
-            echo -e "${GREEN}✓ AMD GPU (ROCm 7.1) support installed${NC}"
+            echo -e "${BLUE}Installing all optional tools...${NC}"
+            venv_pip install pyqt6-tools pytest pytest-qt
+            echo -e "${GREEN}✓ Optional tools installed${NC}"
             ;;
         4)
-            echo ""
-            echo -e "${BLUE}Installing Audio Separator (CPU only)...${NC}"
-            venv_pip install --upgrade onnxruntime
-            venv_pip install "$PYTHON_AUDIO_SEPARATOR_CPU_REPO"
-            echo -e "${GREEN}✓ CPU-only support installed${NC}"
-            ;;
-        5)
             echo -e "${YELLOW}Installation cancelled${NC}"
             return 0
             ;;
@@ -471,22 +350,30 @@ verify_dependencies() {
 
     # Check optional dependencies
     echo ""
-    echo -e "${YELLOW}Checking optional AI audio dependencies...${NC}"
-    if venv_pip show audio-separator &> /dev/null; then
-        sep_version=$(venv_pip show audio-separator 2>/dev/null | grep "^Version:" | cut -d' ' -f2)
-        echo -e "${GREEN}✓ AI audio features installed${NC}"
-        echo "  audio-separator ($sep_version)"
+    echo -e "${YELLOW}Checking optional developer tools...${NC}"
+    optional_installed=()
+    for pkg in pyqt6-tools pytest pytest-qt; do
+        if venv_pip show "$pkg" &> /dev/null; then
+            version=$(venv_pip show "$pkg" 2>/dev/null | grep "^Version:" | cut -d' ' -f2)
+            optional_installed+=("$pkg ($version)")
+        fi
+    done
+
+    if [ ${#optional_installed[@]} -gt 0 ]; then
+        echo -e "${GREEN}✓ Optional tools installed${NC}"
+        for pkg in "${optional_installed[@]}"; do
+            echo "  $pkg"
+        done
     else
-        echo -e "${YELLOW}○ AI audio features not installed (optional)${NC}"
+        echo -e "${YELLOW}○ Optional tools not installed (optional)${NC}"
         echo "  Use option 3 to install them"
     fi
 }
 
-# Function to rebuild PyAV against system FFmpeg (needed for ASS subtitles)
-rebuild_pyav_from_source() {
+reinstall_dependencies() {
     echo ""
     echo "========================================="
-    echo "Rebuild PyAV from Source"
+    echo "Reinstall Dependencies"
     echo "========================================="
     echo ""
 
@@ -494,29 +381,46 @@ rebuild_pyav_from_source() {
         return 1
     fi
 
-    if command -v ffmpeg &> /dev/null; then
-        if ffmpeg -filters 2>/dev/null | grep -qE '^\s*T.*\bsubtitles\b'; then
-            echo -e "${GREEN}✓ FFmpeg subtitles filter detected${NC}"
-        else
-            echo -e "${YELLOW}Warning: FFmpeg subtitles filter not detected.${NC}"
-            echo -e "${YELLOW}Make sure FFmpeg is built with libass support.${NC}"
-        fi
+    echo -e "${YELLOW}This will force reinstall all dependencies from requirements.txt.${NC}"
+    echo -n "Continue? [y/N]: "
+    read -r response
+
+    if [[ "$response" =~ ^[Yy]$ ]]; then
+        echo ""
+        echo -e "${BLUE}Reinstalling dependencies...${NC}"
+        venv_pip install --upgrade --force-reinstall -r "$PROJECT_DIR/requirements.txt"
+        echo ""
+        echo -e "${GREEN}✓ Dependencies reinstalled${NC}"
     else
-        echo -e "${YELLOW}Warning: FFmpeg not found in PATH.${NC}"
-        echo -e "${YELLOW}PyAV will still build, but subtitle support may be missing.${NC}"
+        echo -e "${YELLOW}Reinstall cancelled${NC}"
+    fi
+}
+
+backup_database() {
+    echo ""
+    echo "========================================="
+    echo "Backup Local Database"
+    echo "========================================="
+    echo ""
+
+    local db_path="$PROJECT_DIR/data/media_tracker.db"
+    local backup_dir="$PROJECT_DIR/data/backups"
+
+    if [ ! -f "$db_path" ]; then
+        echo -e "${YELLOW}No database found at:${NC} $db_path"
+        echo -e "${YELLOW}Run the app once to create the database.${NC}"
+        return 0
     fi
 
-    echo ""
-    echo -e "${BLUE}Rebuilding PyAV against system FFmpeg...${NC}"
-    echo -e "${YELLOW}This can take a few minutes and may require build tools.${NC}"
-    echo ""
+    mkdir -p "$backup_dir"
+    local timestamp
+    timestamp=$(date +"%Y%m%d_%H%M%S")
+    local backup_path="$backup_dir/media_tracker_${timestamp}.db"
 
-    venv_pip uninstall -y av 2>/dev/null
-    if venv_pip install --no-binary av av; then
-        echo -e "${GREEN}✓ PyAV rebuilt from source${NC}"
+    if cp "$db_path" "$backup_path"; then
+        echo -e "${GREEN}✓ Backup created:${NC} $backup_path"
     else
-        echo -e "${RED}Failed to build PyAV from source.${NC}"
-        echo -e "${YELLOW}Make sure build tools and FFmpeg dev libraries are installed.${NC}"
+        echo -e "${RED}Failed to create backup.${NC}"
         return 1
     fi
 }
@@ -682,7 +586,6 @@ echo "This may take a few minutes..."
 
 cd "$PROJECT_DIR"
 venv_pip install -r requirements.txt
-rebuild_pyav_from_source
 
 echo -e "${GREEN}✓ Dependencies installed${NC}"
 echo ""
@@ -726,12 +629,12 @@ main() {
             verify_dependencies
             exit 0
             ;;
-        --rebuild-pyav)
-            rebuild_pyav_from_source
+        --reinstall)
+            reinstall_dependencies
             exit 0
             ;;
-        --download-models)
-            download_audio_separator_models
+        --backup-db)
+            backup_database
             exit 0
             ;;
     esac
@@ -755,10 +658,10 @@ main() {
                 verify_dependencies
                 ;;
             5)
-                rebuild_pyav_from_source
+                reinstall_dependencies
                 ;;
             6)
-                download_audio_separator_models
+                backup_database
                 ;;
             7)
                 echo ""
