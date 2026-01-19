@@ -1038,6 +1038,52 @@ class MovieImportService(BaseImportService):
 
         return titles
 
+    def _filter_strict_matches(self, search_title: str, matches: List[Dict]) -> List[Dict]:
+        """
+        Strictly filter matches to remove false positives.
+        For short titles (1-2 words), only keep very close matches.
+        Critical for movies like "Up", "It", "Her", etc.
+        """
+        if not search_title or not matches:
+            return matches
+
+        from rapidfuzz import fuzz
+
+        search_lower = search_title.lower().strip()
+        search_words = search_lower.split()
+        search_word_count = len(search_words)
+
+        filtered = []
+
+        for match in matches:
+            match_title = (match.get('title') or '').lower().strip()
+            variant_words = match_title.split()
+            variant_word_count = len(variant_words)
+
+            # For short search terms (1-2 words), be VERY strict
+            if search_word_count <= 2:
+                # Word count must be similar (within 1 word)
+                if abs(variant_word_count - search_word_count) > 1:
+                    continue
+
+                # Calculate similarity ratio
+                ratio = fuzz.ratio(search_lower, match_title)
+
+                # For very short titles (1 word), require near-perfect match
+                if search_word_count == 1:
+                    if ratio >= 85:  # "Up" vs "Up" = 100, "Up" vs "Upon" = 67
+                        filtered.append(match)
+                # For 2-word titles, require high similarity
+                elif ratio >= 80:
+                    filtered.append(match)
+            else:
+                # For longer titles (3+ words), be more lenient
+                ratio = fuzz.ratio(search_lower, match_title)
+                if ratio >= 70:
+                    filtered.append(match)
+
+        return filtered
+
     def search_media(self, titles: Dict[str, str]) -> Tuple[List[Dict], bool]:
         """
         Search for movies using TMDB.
@@ -1062,6 +1108,9 @@ class MovieImportService(BaseImportService):
         # Search TMDB
         try:
             matches = self.tmdb_client.search_movie(title, year)
+
+            # Apply strict filtering for short titles to prevent false positives
+            matches = self._filter_strict_matches(title, matches)
 
             # Cache results
             if cache_key:
@@ -1153,6 +1202,52 @@ class TVImportService(BaseImportService):
 
         return titles
 
+    def _filter_strict_matches(self, search_title: str, matches: List[Dict]) -> List[Dict]:
+        """
+        Strictly filter matches to remove false positives.
+        For short titles (1-2 words), only keep very close matches.
+        Critical for TV shows with short names.
+        """
+        if not search_title or not matches:
+            return matches
+
+        from rapidfuzz import fuzz
+
+        search_lower = search_title.lower().strip()
+        search_words = search_lower.split()
+        search_word_count = len(search_words)
+
+        filtered = []
+
+        for match in matches:
+            match_title = (match.get('title') or '').lower().strip()
+            variant_words = match_title.split()
+            variant_word_count = len(variant_words)
+
+            # For short search terms (1-2 words), be VERY strict
+            if search_word_count <= 2:
+                # Word count must be similar (within 1 word)
+                if abs(variant_word_count - search_word_count) > 1:
+                    continue
+
+                # Calculate similarity ratio
+                ratio = fuzz.ratio(search_lower, match_title)
+
+                # For very short titles (1 word), require near-perfect match
+                if search_word_count == 1:
+                    if ratio >= 85:
+                        filtered.append(match)
+                # For 2-word titles, require high similarity
+                elif ratio >= 80:
+                    filtered.append(match)
+            else:
+                # For longer titles (3+ words), be more lenient
+                ratio = fuzz.ratio(search_lower, match_title)
+                if ratio >= 70:
+                    filtered.append(match)
+
+        return filtered
+
     def search_media(self, titles: Dict[str, str]) -> Tuple[List[Dict], bool]:
         """
         Search for TV shows using TMDB.
@@ -1177,6 +1272,9 @@ class TVImportService(BaseImportService):
         # Search TMDB
         try:
             matches = self.tmdb_client.search_tv(title, year)
+
+            # Apply strict filtering for short titles to prevent false positives
+            matches = self._filter_strict_matches(title, matches)
 
             # Cache results
             if cache_key:
