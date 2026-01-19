@@ -109,10 +109,10 @@ class MainWindow(QMainWindow):
         add_action.triggered.connect(self.add_item)
         toolbar.addAction(add_action)
 
-        # Import button (for Anime only)
-        import_action = QAction("Import Anime", self)
-        import_action.triggered.connect(self.import_anime)
-        toolbar.addAction(import_action)
+        # Import button (works for all media types)
+        self.import_action = QAction("Import", self)
+        self.import_action.triggered.connect(self.import_media)
+        toolbar.addAction(self.import_action)
 
         toolbar.addSeparator()
 
@@ -298,12 +298,30 @@ class MainWindow(QMainWindow):
                 self.load_data()
                 self.statusBar().showMessage(f"Added: {item.title}", 3000)
 
-    def import_anime(self):
-        """Import anime from Excel/ODS file."""
+    def import_media(self):
+        """Import media from Excel/ODS file based on currently selected tab."""
+        # Create the appropriate import service based on current media type
+        from utils.import_service import AnimeImportService, MovieImportService, TVImportService
+
+        if self.current_media_type == "Anime":
+            import_service = AnimeImportService(self.anilist_client, self.db)
+        elif self.current_media_type == "Movie":
+            import_service = MovieImportService(self.tmdb_client, self.db)
+        elif self.current_media_type == "TV":
+            import_service = TVImportService(self.tmdb_client, self.db)
+        else:
+            QMessageBox.warning(
+                self,
+                "Unknown Media Type",
+                f"Cannot import for media type: {self.current_media_type}"
+            )
+            return
+
+        # Open import dialog with the appropriate service
         dialog = ImportDialog(
             parent=self,
             db_manager=self.db,
-            anilist_client=self.anilist_client
+            import_service=import_service
         )
 
         dialog.exec()

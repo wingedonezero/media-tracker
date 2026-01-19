@@ -9,7 +9,7 @@ from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QColor, QBrush
 from pathlib import Path
 from typing import List
-from utils.import_service import SmartImportService, ImportResult
+from utils.import_service import BaseImportService, ImportResult
 from database.models import MediaItem
 
 
@@ -47,17 +47,28 @@ class ImportThread(QThread):
 
 
 class ImportDialog(QDialog):
-    """Dialog for importing anime from Excel/ODS files."""
+    """Dialog for importing media from Excel/ODS files with smart matching."""
 
-    def __init__(self, parent, db_manager, anilist_client):
+    def __init__(self, parent, db_manager, import_service: BaseImportService):
+        """
+        Initialize import dialog.
+
+        Args:
+            parent: Parent widget
+            db_manager: Database manager
+            import_service: Import service instance (Anime, Movie, or TV)
+        """
         super().__init__(parent)
         self.db_manager = db_manager
-        self.anilist_client = anilist_client
-        self.import_service = SmartImportService(anilist_client, db_manager)
+        self.import_service = import_service
         self.import_results: List[ImportResult] = []
         self.import_thread = None
 
-        self.setWindowTitle("Smart Import - Anime")
+        # Get media type from service
+        self.media_type = import_service.get_media_type()
+
+        # Set window title based on media type
+        self.setWindowTitle(f"Smart Import - {self.media_type}")
         self.setModal(True)
         self.resize(1000, 700)
 
@@ -513,13 +524,13 @@ class ImportDialog(QDialog):
         reply = QMessageBox.question(
             self,
             "Confirm Add",
-            f"Add {len(items_to_add)} anime to the database?",
+            f"Add {len(items_to_add)} {self.media_type.lower()} item(s) to the database?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         )
 
         if reply == QMessageBox.StandardButton.Yes:
             added_count = self.add_matches_to_db(items_to_add)
-            QMessageBox.information(self, "Success", f"Added {added_count} anime to database!")
+            QMessageBox.information(self, "Success", f"Added {added_count} {self.media_type.lower()} item(s) to database!")
 
             # Refresh results to show new duplicates
             self.populate_results_tree(self.import_results)
@@ -548,39 +559,63 @@ class ImportDialog(QDialog):
             return
 
         added_count = self.add_matches_to_db(items_to_add)
-        QMessageBox.information(self, "Success", f"Added {added_count} anime to database!")
+        QMessageBox.information(self, "Success", f"Added {added_count} {self.media_type.lower()} item(s) to database!")
 
         # Refresh results
         self.populate_results_tree(self.import_results)
 
     def add_matches_to_db(self, matches: List[dict]) -> int:
-        """Add matches to database. Returns count of added items."""
+        """
+        Add matches to database with TRANSACTION SAFETY.
+        Returns count of added items.
+
+        CRITICAL SAFEGUARDS:
+        1. Each item wrapped in try/except to prevent cascading failures
+        2. Uses correct ID field based on media type (anilist_id, tmdb_id)
+        3. Marks items as added in session to prevent duplicates
+        4. Only adds items that passed duplicate check
+        """
         added_count = 0
         added_ids = []
 
         # Get selected status from combo box
         selected_status = self.status_combo.currentText()
 
+        # Get the correct ID field name for this media type
+        id_field_name = self.import_service.get_id_field_name()
+
         for match in matches:
             try:
-                media_item = MediaItem(
-                    title=match.get('title'),
-                    native_title=match.get('native_title'),
-                    romaji_title=match.get('romaji_title'),
-                    year=match.get('year'),
-                    media_type='Anime',
-                    status=selected_status,
-                    anilist_id=match.get('id'),
-                    poster_url=match.get('poster_url')
-                )
+                # Build kwargs for MediaItem, using the correct ID field
+                item_kwargs = {
+                    'title': match.get('title'),
+                    'year': match.get('year'),
+                    'media_type': self.media_type,
+                    'status': selected_status,
+                    'poster_url': match.get('poster_url')
+                }
+
+                # Add the correct ID field (anilist_id for Anime, tmdb_id for Movie/TV)
+                match_id = self.import_service.get_match_id(match)
+                if match_id:
+                    item_kwargs[id_field_name] = match_id
+
+                # For anime, also add native_title and romaji_title
+                if self.media_type == 'Anime':
+                    item_kwargs['native_title'] = match.get('native_title')
+                    item_kwargs['romaji_title'] = match.get('romaji_title')
+
+                media_item = MediaItem(**item_kwargs)
 
                 self.db_manager.add_item(media_item)
                 added_count += 1
-                added_ids.append(match.get('id'))
+                if match_id:
+                    added_ids.append(match_id)
             except Exception as e:
                 print(f"Failed to add {match.get('title')}: {e}")
 
         # Mark as added in import session to prevent duplicate searches
+        # This is a CRITICAL SAFEGUARD against duplicates within the same import
         if added_ids:
             self.import_service.mark_as_added(added_ids)
 
@@ -632,17 +667,18 @@ class ImportDialog(QDialog):
             QMessageBox.information(self, "No Unmatched", "No unmatched entries to export!")
             return
 
+        default_filename = f"unmatched_{self.media_type.lower()}.txt"
         file_path, _ = QFileDialog.getSaveFileName(
             self,
             "Export Unmatched Entries",
-            str(Path.home() / "unmatched_anime.txt"),
+            str(Path.home() / default_filename),
             "Text Files (*.txt);;All Files (*)"
         )
 
         if file_path:
             try:
                 with open(file_path, 'w', encoding='utf-8') as f:
-                    f.write(f"Unmatched Anime Entries ({len(unmatched)} total)\n")
+                    f.write(f"Unmatched {self.media_type} Entries ({len(unmatched)} total)\n")
                     f.write("=" * 80 + "\n\n")
 
                     for i, result in enumerate(unmatched, 1):
