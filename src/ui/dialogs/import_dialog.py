@@ -63,6 +63,7 @@ class ImportDialog(QDialog):
         self.import_service = import_service
         self.import_results: List[ImportResult] = []
         self.import_thread = None
+        self.import_in_progress = False  # Track if import is currently running
 
         # Get media type from service
         self.media_type = import_service.get_media_type()
@@ -148,6 +149,7 @@ class ImportDialog(QDialog):
         self.results_tree.setColumnWidth(2, 200)
         self.results_tree.setSelectionMode(QTreeWidget.SelectionMode.ExtendedSelection)
         self.results_tree.itemSelectionChanged.connect(self.on_selection_changed)
+        self.results_tree.itemDoubleClicked.connect(self.on_item_double_clicked)
         splitter.addWidget(self.results_tree)
 
         # Details panel
@@ -230,6 +232,9 @@ class ImportDialog(QDialog):
         if not hasattr(self, 'file_path'):
             return
 
+        # Mark import as in progress (prevents manual matching during import)
+        self.import_in_progress = True
+
         # Disable buttons
         self.import_button.setEnabled(False)
         self.add_all_button.setEnabled(False)
@@ -269,7 +274,8 @@ class ImportDialog(QDialog):
 
     def on_import_finished(self):
         """Handle import completion."""
-        self.status_label.setText("Import complete!")
+        self.import_in_progress = False  # Import complete, allow manual matching
+        self.status_label.setText("Import complete! Double-click unmatched items to manually search.")
         self.progress_bar.setValue(100)
 
         # Enable buttons
@@ -280,6 +286,7 @@ class ImportDialog(QDialog):
 
     def on_import_error(self, error_message):
         """Handle import error."""
+        self.import_in_progress = False  # Import failed, allow manual matching
         self.status_label.setText(f"Error: {error_message}")
         self.import_button.setEnabled(True)
         QMessageBox.critical(self, "Import Error", f"Failed to import:\n{error_message}")
@@ -691,3 +698,92 @@ class ImportDialog(QDialog):
                 QMessageBox.information(self, "Success", f"Exported {len(unmatched)} unmatched entries to:\n{file_path}")
             except Exception as e:
                 QMessageBox.critical(self, "Export Error", f"Failed to export:\n{e}")
+
+    def on_item_double_clicked(self, item, column):
+        """
+        Handle double-click on tree item.
+        Allow manual matching for unmatched entries (only when import is complete).
+        """
+        # CRITICAL SAFEGUARD: Don't allow editing while import is in progress
+        if self.import_in_progress:
+            QMessageBox.warning(
+                self,
+                "Import In Progress",
+                "Please wait for the import to complete before manually matching items."
+            )
+            return
+
+        # Only allow manual matching on top-level items (not child matches)
+        if item.parent():
+            return
+
+        # Get the result index from the item
+        result_index = item.data(0, Qt.ItemDataRole.UserRole)
+        if not isinstance(result_index, int) or result_index >= len(self.import_results):
+            return
+
+        result = self.import_results[result_index]
+
+        # Only allow manual matching for unmatched or error items
+        if result.status not in ['no_match', 'error']:
+            return
+
+        # Open manual match dialog
+        self.open_manual_match_dialog(result, result_index)
+
+    def open_manual_match_dialog(self, result: ImportResult, result_index: int):
+        """Open manual match dialog for an unmatched result."""
+        from ui.dialogs.manual_match_dialog import ManualMatchDialog
+
+        dialog = ManualMatchDialog(
+            parent=self,
+            import_service=self.import_service,
+            original_text=result.original_text,
+            parsed_titles=result.parsed_titles
+        )
+
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            selected_matches = dialog.get_selected_matches()
+
+            if selected_matches:
+                # Update the ImportResult with manually selected matches
+                result.matches = selected_matches
+
+                # Calculate confidence for best match
+                if selected_matches:
+                    result.confidence = max(m.get('_confidence', 0) for m in selected_matches)
+
+                # Check for duplicates
+                duplicate_matches = []
+                new_matches = []
+
+                for match in selected_matches:
+                    is_dup, dup_desc = self.import_service.check_duplicate(match)
+                    if is_dup:
+                        duplicate_matches.append((match, dup_desc))
+                    else:
+                        new_matches.append(match)
+
+                # Update status
+                if duplicate_matches and not new_matches:
+                    result.status = 'duplicate'
+                    result.message = f"All {len(duplicate_matches)} manually matched item(s) already in database"
+                elif duplicate_matches and new_matches:
+                    result.status = 'partial_duplicate'
+                    result.message = f"Found {len(new_matches)} new match(es), {len(duplicate_matches)} duplicate(s) [manual]"
+                else:
+                    result.status = 'success'
+                    result.message = f"Found {len(new_matches)} match(es) [manual]"
+
+                # Refresh the tree to show updated result
+                self.populate_results_tree(self.import_results)
+
+                # Update statistics
+                self.update_statistics(self.import_results)
+
+                QMessageBox.information(
+                    self,
+                    "Matches Added",
+                    f"Successfully added {len(selected_matches)} match(es) to this entry.\n\n"
+                    "The entry is now shown with the updated matches."
+                )
