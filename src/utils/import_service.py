@@ -1,4 +1,4 @@
-"""Smart import service for Excel/ODS files with intelligent anime matching."""
+"""Smart import service for Excel/ODS files with intelligent media matching."""
 
 import re
 import time
@@ -7,80 +7,31 @@ import xml.etree.ElementTree as ET
 from typing import List, Dict, Optional, Tuple, Set
 from dataclasses import dataclass
 from pathlib import Path
+from abc import ABC, abstractmethod
 
 
 @dataclass
 class ImportResult:
     """Result of an import attempt for a single entry."""
     original_text: str
-    parsed_titles: Dict[str, str]  # {english, japanese, romaji}
-    matches: List[Dict]  # List of AniList matches
-    status: str  # 'success', 'duplicate', 'no_match', 'error', 'cached'
+    parsed_titles: Dict[str, str]  # {english, japanese, romaji, etc.}
+    matches: List[Dict]  # List of API matches
+    status: str  # 'success', 'duplicate', 'no_match', 'error', 'cached', 'partial_duplicate'
     message: str
     confidence: float = 0.0  # 0-1 confidence score
 
 
-class SmartImportService:
-    """Service for importing anime from Excel/ODS files with smart matching."""
+class BaseImportService(ABC):
+    """Base service for importing media from Excel/ODS files with smart matching."""
 
-    # AniList rate limit: 90 requests per minute
-    # We'll use 2.5 seconds to be ULTRA safe (~24/min instead of 60/min)
-    # This is conservative but prevents rate limit errors entirely
-    RATE_LIMIT_DELAY = 2.5
+    # Rate limit delay (can be overridden by subclasses)
+    RATE_LIMIT_DELAY = 2.5  # seconds
 
     # Minimum confidence threshold (0-1)
     MIN_CONFIDENCE = 0.35  # Only include matches with 35%+ confidence
 
-    # Comprehensive technical keywords to filter out
-    # These are UNAMBIGUOUS technical terms that should NEVER appear in anime titles
-    TECHNICAL_KEYWORDS = [
-        # Video formats
-        'BDMV', 'DVDISO', 'DVDMV', 'BluRay', 'Blu-ray', 'BD-BOX', 'BDISO',
-        'WebDL', 'WEB-DL', 'WEBRip', 'HDRip', 'BRRip', 'DVDRip',
-
-        # Resolutions and quality
-        '1080p', '1080i', '720p', '480p', '480i', '2160p', '4K', '8K',
-
-        # Video codecs
-        'AVC', 'HEVC', 'H264', 'H.264', 'H265', 'H.265', 'x264', 'x265',
-        'MPEG', 'MPEG-2', 'VP9', 'AV1',
-
-        # Audio codecs
-        'AAC', 'AC3', 'E-AC3', 'DTS', 'FLAC', 'MP3', 'LPCM',
-
-        # File types
-        'MKV', 'MP4', 'AVI', 'ISO',
-
-        # Volume/Disc indicators
-        'Vol.', 'Vol', 'Volume', 'DISC', 'Disc', 'Disk',
-        'BD×', 'DVD×', 'BDx', 'DVDx',
-
-        # Regions
-        'R1', 'R2', 'R2J', 'R1US', 'USA', 'JPN', 'JP', 'NTSC', 'PAL',
-
-        # Release info (ONLY unambiguous ones)
-        'Fin', 'Remux', 'Encode', 'Rip', 'Source',
-
-        # Common uploader tags and groups
-        'Nyaa', 'U2', 'ADC', 'Share', 'Self-Rip', 'Self-Purchase',
-        'VCB-Studio', 'VCB', 'TSDM', 'Kamigami', 'ANK-RAWS',
-        'philosophy-raws', 'kakeruSMC', 'Lupin the Nerd',
-        'taskforce', 'Ioroid', 'NAN0', 'CTM', 'Bikko',
-
-        # Chinese/Japanese indicators that aren't titles
-        '自抓', '自购', '感谢', 'thanks', 'Thanks', '台版',
-        '自扫', '合集', '修正', '整合'
-    ]
-
-    # Ambiguous keywords that might appear in anime titles
-    # Only filter if they appear as standalone words
-    AMBIGUOUS_KEYWORDS = [
-        'OVA', 'OAD', 'Special', 'Movie', 'MOVIE', 'TV'
-    ]
-
-    def __init__(self, anilist_client, db_manager):
+    def __init__(self, db_manager):
         """Initialize import service."""
-        self.anilist_client = anilist_client
         self.db_manager = db_manager
         self.last_request_time = 0
 
@@ -88,16 +39,47 @@ class SmartImportService:
         # Format: {normalized_title: [list_of_matches]}
         self.search_cache: Dict[str, List[Dict]] = {}
 
-        # Track AniList IDs added in this import session
+        # Track IDs added in this import session (prevents duplicates within same import)
         self.added_in_session: Set[int] = set()
 
-        # Initialize offline matcher (optional, graceful degradation if not available)
-        try:
-            from utils.offline_anime_matcher import OfflineAnimeMatcher
-            self.offline_matcher = OfflineAnimeMatcher()
-        except Exception as e:
-            print(f"Offline matcher not available: {e}")
-            self.offline_matcher = None
+    @abstractmethod
+    def get_media_type(self) -> str:
+        """Return the media type for this service ('Anime', 'Movie', 'TV')."""
+        pass
+
+    @abstractmethod
+    def parse_titles_from_entry(self, entry: str) -> Dict[str, str]:
+        """
+        Parse titles from entry text.
+        Returns dict with title variants (english, romaji, japanese, etc.)
+        """
+        pass
+
+    @abstractmethod
+    def search_media(self, titles: Dict[str, str]) -> Tuple[List[Dict], bool]:
+        """
+        Search for media using the API.
+        Returns (list of matches, was_cached).
+        """
+        pass
+
+    @abstractmethod
+    def calculate_confidence(self, titles: Dict[str, str], match: Dict) -> float:
+        """
+        Calculate confidence score for a match (0-1).
+        Higher is better.
+        """
+        pass
+
+    @abstractmethod
+    def get_match_id(self, match: Dict) -> Optional[int]:
+        """Get the unique ID from a match (anilist_id, tmdb_id, etc.)."""
+        pass
+
+    @abstractmethod
+    def get_id_field_name(self) -> str:
+        """Get the database field name for the ID (e.g., 'anilist_id', 'tmdb_id')."""
+        pass
 
     def parse_ods_file(self, file_path: str) -> List[str]:
         """Parse ODS file and extract entries."""
@@ -153,6 +135,325 @@ class SmartImportService:
 
         except Exception as e:
             raise Exception(f"Failed to parse Excel file: {e}")
+
+    def _normalize_title_for_cache(self, titles: Dict[str, str]) -> str:
+        """
+        Create a normalized cache key from titles.
+        This helps us avoid re-searching similar entries.
+        """
+        # Use the best available title
+        key_title = (
+            titles.get('english') or
+            titles.get('romaji') or
+            titles.get('japanese') or
+            titles.get('chinese') or
+            titles.get('title') or
+            ''
+        )
+
+        # Normalize: lowercase, remove special chars, collapse whitespace
+        normalized = re.sub(r'[^\w\s]', ' ', key_title.lower())
+        normalized = ' '.join(normalized.split())
+
+        return normalized
+
+    def _extract_year(self, text: str) -> Optional[int]:
+        """Extract year from text if present."""
+        # Look for 4-digit year in parentheses or standalone
+        year_match = re.search(r'\((\d{4})\)|(?:^|\s)(\d{4})(?:\s|$)', text)
+        if year_match:
+            year_str = year_match.group(1) or year_match.group(2)
+            year = int(year_str)
+            if 1950 <= year <= 2030:
+                return year
+        return None
+
+    def _rate_limit_wait(self):
+        """Wait to respect rate limits."""
+        elapsed = time.time() - self.last_request_time
+        if elapsed < self.RATE_LIMIT_DELAY:
+            time.sleep(self.RATE_LIMIT_DELAY - elapsed)
+        self.last_request_time = time.time()
+
+    def check_duplicate(self, match: Dict) -> Tuple[bool, Optional[str]]:
+        """
+        Check if media already exists in database or was added in this session.
+        Returns (is_duplicate, existing_entry_description)
+
+        This method provides CRITICAL safeguards against database corruption:
+        1. Checks session tracking to prevent duplicates within same import
+        2. Checks database by unique ID (anilist_id, tmdb_id)
+        3. Checks database by title+year combination
+        """
+        media_id = self.get_match_id(match)
+        title = match.get('title')
+        year = match.get('year')
+        media_type = self.get_media_type()
+        id_field_name = self.get_id_field_name()
+
+        # Check if added in this import session
+        if media_id and media_id in self.added_in_session:
+            return True, f"{title} ({year}) [added in this import]"
+
+        # Check by unique ID in database
+        existing = self.db_manager.get_items(media_type=media_type)
+        for item in existing:
+            # Check by ID field (anilist_id, tmdb_id, etc.)
+            item_id = getattr(item, id_field_name, None)
+            if item_id and item_id == media_id:
+                return True, f"{item.title} ({item.year})"
+
+            # Also check title + year combination
+            if item.title == title and item.year == year:
+                return True, f"{item.title} ({item.year})"
+
+        return False, None
+
+    def import_file(self, file_path: str, progress_callback=None, result_callback=None) -> List[ImportResult]:
+        """
+        Import media from file.
+        Returns list of ImportResult objects.
+
+        This method ensures TRANSACTION SAFETY:
+        1. Only reads and processes file - doesn't write to DB
+        2. Returns results for user review
+        3. Actual DB writes happen separately in dialog's add_matches_to_db
+        4. Each DB write is individually protected with try/except
+
+        Args:
+            file_path: Path to Excel/ODS file
+            progress_callback: Optional callback(current, total, entry) for progress updates
+            result_callback: Optional callback(result) called for each processed entry
+        """
+        results = []
+
+        # Clear session tracking
+        self.search_cache.clear()
+        self.added_in_session.clear()
+
+        # Parse file based on extension
+        file_ext = Path(file_path).suffix.lower()
+
+        try:
+            if file_ext == '.ods':
+                entries = self.parse_ods_file(file_path)
+            elif file_ext in ['.xlsx', '.xls']:
+                entries = self.parse_excel_file(file_path)
+            else:
+                raise Exception(f"Unsupported file format: {file_ext}")
+        except Exception as e:
+            # Return error result
+            error_result = ImportResult(
+                original_text="",
+                parsed_titles={},
+                matches=[],
+                status='error',
+                message=f"Failed to parse file: {e}"
+            )
+            results.append(error_result)
+            if result_callback:
+                result_callback(error_result)
+            return results
+
+        total_entries = len(entries)
+
+        for i, entry in enumerate(entries):
+            # Update progress
+            if progress_callback:
+                progress_callback(i + 1, total_entries, entry[:50])
+
+            # Parse titles from entry
+            titles = self.parse_titles_from_entry(entry)
+
+            if not any(titles.values()):
+                result = ImportResult(
+                    original_text=entry,
+                    parsed_titles=titles,
+                    matches=[],
+                    status='error',
+                    message="Could not extract any titles from entry"
+                )
+                results.append(result)
+                if result_callback:
+                    result_callback(result)
+                continue
+
+            # Search for matches (checks cache first)
+            try:
+                matches, was_cached = self.search_media(titles)
+
+                if not matches:
+                    result = ImportResult(
+                        original_text=entry,
+                        parsed_titles=titles,
+                        matches=[],
+                        status='no_match',
+                        message=f"No matches found"
+                    )
+                    results.append(result)
+                    if result_callback:
+                        result_callback(result)
+                    continue
+
+                # Calculate confidence for each match
+                for match in matches:
+                    match['_confidence'] = self.calculate_confidence(titles, match)
+
+                # Filter by minimum confidence
+                matches = [m for m in matches if m.get('_confidence', 0) >= self.MIN_CONFIDENCE]
+
+                if not matches:
+                    result = ImportResult(
+                        original_text=entry,
+                        parsed_titles=titles,
+                        matches=[],
+                        status='no_match',
+                        message=f"No matches with sufficient confidence (min {self.MIN_CONFIDENCE:.0%})"
+                    )
+                    results.append(result)
+                    if result_callback:
+                        result_callback(result)
+                    continue
+
+                # Sort by confidence
+                matches.sort(key=lambda x: x.get('_confidence', 0), reverse=True)
+
+                # Check for duplicates (CRITICAL SAFEGUARD)
+                duplicate_matches = []
+                new_matches = []
+
+                for match in matches:
+                    is_dup, dup_desc = self.check_duplicate(match)
+                    if is_dup:
+                        duplicate_matches.append((match, dup_desc))
+                    else:
+                        new_matches.append(match)
+
+                # Determine status
+                cache_suffix = " [cached search]" if was_cached else ""
+                if duplicate_matches and not new_matches:
+                    status = 'duplicate'
+                    message = f"All {len(duplicate_matches)} match(es) already in database{cache_suffix}"
+                elif duplicate_matches and new_matches:
+                    status = 'partial_duplicate'
+                    message = f"Found {len(new_matches)} new match(es), {len(duplicate_matches)} duplicate(s){cache_suffix}"
+                else:
+                    status = 'success'
+                    message = f"Found {len(new_matches)} match(es){cache_suffix}"
+
+                result = ImportResult(
+                    original_text=entry,
+                    parsed_titles=titles,
+                    matches=matches,
+                    status=status,
+                    message=message,
+                    confidence=matches[0].get('_confidence', 0) if matches else 0
+                )
+                results.append(result)
+                # Emit result immediately for live updates
+                if result_callback:
+                    result_callback(result)
+
+            except Exception as e:
+                result = ImportResult(
+                    original_text=entry,
+                    parsed_titles=titles,
+                    matches=[],
+                    status='error',
+                    message=f"Search error: {e}"
+                )
+                results.append(result)
+                if result_callback:
+                    result_callback(result)
+
+        return results
+
+    def mark_as_added(self, media_ids: List[int]):
+        """
+        Mark media IDs as added in this session.
+        Call this after adding items to the database.
+
+        This is a CRITICAL SAFEGUARD to prevent duplicate additions
+        within the same import session.
+        """
+        self.added_in_session.update(media_ids)
+
+
+# ============================================================================
+# ANIME IMPORT SERVICE
+# ============================================================================
+
+class AnimeImportService(BaseImportService):
+    """Service for importing anime from Excel/ODS files with AniList matching."""
+
+    # Comprehensive technical keywords to filter out
+    # These are UNAMBIGUOUS technical terms that should NEVER appear in anime titles
+    TECHNICAL_KEYWORDS = [
+        # Video formats
+        'BDMV', 'DVDISO', 'DVDMV', 'BluRay', 'Blu-ray', 'BD-BOX', 'BDISO',
+        'WebDL', 'WEB-DL', 'WEBRip', 'HDRip', 'BRRip', 'DVDRip',
+
+        # Resolutions and quality
+        '1080p', '1080i', '720p', '480p', '480i', '2160p', '4K', '8K',
+
+        # Video codecs
+        'AVC', 'HEVC', 'H264', 'H.264', 'H265', 'H.265', 'x264', 'x265',
+        'MPEG', 'MPEG-2', 'VP9', 'AV1',
+
+        # Audio codecs
+        'AAC', 'AC3', 'E-AC3', 'DTS', 'FLAC', 'MP3', 'LPCM',
+
+        # File types
+        'MKV', 'MP4', 'AVI', 'ISO',
+
+        # Volume/Disc indicators
+        'Vol.', 'Vol', 'Volume', 'DISC', 'Disc', 'Disk',
+        'BD×', 'DVD×', 'BDx', 'DVDx',
+
+        # Regions
+        'R1', 'R2', 'R2J', 'R1US', 'USA', 'JPN', 'JP', 'NTSC', 'PAL',
+
+        # Release info (ONLY unambiguous ones)
+        'Fin', 'Remux', 'Encode', 'Rip', 'Source',
+
+        # Common uploader tags and groups
+        'Nyaa', 'U2', 'ADC', 'Share', 'Self-Rip', 'Self-Purchase',
+        'VCB-Studio', 'VCB', 'TSDM', 'Kamigami', 'ANK-RAWS',
+        'philosophy-raws', 'kakeruSMC', 'Lupin the Nerd',
+        'taskforce', 'Ioroid', 'NAN0', 'CTM', 'Bikko',
+
+        # Chinese/Japanese indicators that aren't titles
+        '自抓', '自购', '感谢', 'thanks', 'Thanks', '台版',
+        '自扫', '合集', '修正', '整合'
+    ]
+
+    # Ambiguous keywords that might appear in anime titles
+    # Only filter if they appear as standalone words
+    AMBIGUOUS_KEYWORDS = [
+        'OVA', 'OAD', 'Special', 'Movie', 'MOVIE', 'TV'
+    ]
+
+    def __init__(self, anilist_client, db_manager):
+        """Initialize anime import service."""
+        super().__init__(db_manager)
+        self.anilist_client = anilist_client
+
+        # Initialize offline matcher (optional, graceful degradation if not available)
+        try:
+            from utils.offline_anime_matcher import OfflineAnimeMatcher
+            self.offline_matcher = OfflineAnimeMatcher()
+        except Exception as e:
+            print(f"Offline matcher not available: {e}")
+            self.offline_matcher = None
+
+    def get_media_type(self) -> str:
+        return "Anime"
+
+    def get_match_id(self, match: Dict) -> Optional[int]:
+        return match.get('id')
+
+    def get_id_field_name(self) -> str:
+        return "anilist_id"
 
     def parse_titles_from_entry(self, entry: str) -> Dict[str, str]:
         """
@@ -387,44 +688,6 @@ class SmartImportService:
 
         return False
 
-    def _normalize_title_for_cache(self, titles: Dict[str, str]) -> str:
-        """
-        Create a normalized cache key from titles.
-        This helps us avoid re-searching similar entries.
-        """
-        # Use the best available title
-        key_title = (
-            titles.get('english') or
-            titles.get('romaji') or
-            titles.get('japanese') or
-            titles.get('chinese') or
-            ''
-        )
-
-        # Normalize: lowercase, remove special chars, collapse whitespace
-        normalized = re.sub(r'[^\w\s]', ' ', key_title.lower())
-        normalized = ' '.join(normalized.split())
-
-        return normalized
-
-    def _extract_year(self, text: str) -> Optional[int]:
-        """Extract year from text if present."""
-        # Look for 4-digit year in parentheses or standalone
-        year_match = re.search(r'\((\d{4})\)|(?:^|\s)(\d{4})(?:\s|$)', text)
-        if year_match:
-            year_str = year_match.group(1) or year_match.group(2)
-            year = int(year_str)
-            if 1950 <= year <= 2030:
-                return year
-        return None
-
-    def _rate_limit_wait(self):
-        """Wait to respect rate limits."""
-        elapsed = time.time() - self.last_request_time
-        if elapsed < self.RATE_LIMIT_DELAY:
-            time.sleep(self.RATE_LIMIT_DELAY - elapsed)
-        self.last_request_time = time.time()
-
     def _filter_strict_matches(self, search_title: str, matches: List[Dict]) -> List[Dict]:
         """
         Strictly filter matches to remove false positives.
@@ -481,7 +744,7 @@ class SmartImportService:
 
         return filtered
 
-    def search_anime_smart(self, titles: Dict[str, str]) -> Tuple[List[Dict], bool]:
+    def search_media(self, titles: Dict[str, str]) -> Tuple[List[Dict], bool]:
         """
         Search for anime using multiple strategies.
         First tries offline database (fast, no rate limits), then falls back to API search.
@@ -657,7 +920,7 @@ class SmartImportService:
         title = ' '.join(title.split())
         return title.strip()
 
-    def calculate_confidence(self, titles: Dict[str, str], match: Dict, matched_title_types: List[str] = None) -> float:
+    def calculate_confidence(self, titles: Dict[str, str], match: Dict) -> float:
         """
         Calculate confidence score for a match (0-1).
         Higher is better.
@@ -665,7 +928,6 @@ class SmartImportService:
         Args:
             titles: Parsed titles from entry
             match: AniList match data
-            matched_title_types: List of title types that matched (e.g., ['english', 'japanese'])
         """
         confidence = 0.0
 
@@ -731,196 +993,334 @@ class SmartImportService:
 
         return confidence
 
-    def check_duplicate(self, match: Dict) -> Tuple[bool, Optional[str]]:
+
+# ============================================================================
+# MOVIE IMPORT SERVICE
+# ============================================================================
+
+class MovieImportService(BaseImportService):
+    """Service for importing movies from Excel/ODS files with TMDB matching."""
+
+    def __init__(self, tmdb_client, db_manager):
+        """Initialize movie import service."""
+        super().__init__(db_manager)
+        self.tmdb_client = tmdb_client
+
+    def get_media_type(self) -> str:
+        return "Movie"
+
+    def get_match_id(self, match: Dict) -> Optional[int]:
+        return match.get('id')
+
+    def get_id_field_name(self) -> str:
+        return "tmdb_id"
+
+    def parse_titles_from_entry(self, entry: str) -> Dict[str, str]:
         """
-        Check if anime already exists in database or was added in this session.
-        Returns (is_duplicate, existing_entry_description)
+        Parse titles from entry text.
+        For movies, we expect simple format: "Movie Title" or "Movie Title (2020)"
         """
-        anilist_id = match.get('id')
-        title = match.get('title')
-        year = match.get('year')
+        titles = {'title': '', 'year': ''}
 
-        # Check if added in this import session
-        if anilist_id in self.added_in_session:
-            return True, f"{title} ({year}) [added in this import]"
+        # Clean the entry
+        entry = entry.strip()
 
-        # Check by AniList ID in database
-        existing = self.db_manager.get_items(media_type="Anime")
-        for item in existing:
-            if item.anilist_id == anilist_id:
-                return True, f"{item.title} ({item.year})"
-            # Also check title + year combination
-            if item.title == title and item.year == year:
-                return True, f"{item.title} ({item.year})"
+        # Extract year if present
+        year = self._extract_year(entry)
+        if year:
+            titles['year'] = str(year)
+            # Remove year from title
+            entry = re.sub(r'\s*\(\d{4}\)\s*', ' ', entry).strip()
 
-        return False, None
+        # The rest is the title
+        if entry:
+            titles['title'] = entry
 
-    def import_file(self, file_path: str, progress_callback=None, result_callback=None) -> List[ImportResult]:
+        return titles
+
+    def _filter_strict_matches(self, search_title: str, matches: List[Dict]) -> List[Dict]:
         """
-        Import anime from file.
-        Returns list of ImportResult objects.
-
-        Args:
-            file_path: Path to Excel/ODS file
-            progress_callback: Optional callback(current, total, entry) for progress updates
-            result_callback: Optional callback(result) called for each processed entry
+        Strictly filter matches to remove false positives.
+        For short titles (1-2 words), only keep very close matches.
+        Critical for movies like "Up", "It", "Her", etc.
         """
-        results = []
+        if not search_title or not matches:
+            return matches
 
-        # Clear session tracking
-        self.search_cache.clear()
-        self.added_in_session.clear()
+        from rapidfuzz import fuzz
 
-        # Parse file based on extension
-        file_ext = Path(file_path).suffix.lower()
+        search_lower = search_title.lower().strip()
+        search_words = search_lower.split()
+        search_word_count = len(search_words)
 
-        try:
-            if file_ext == '.ods':
-                entries = self.parse_ods_file(file_path)
-            elif file_ext in ['.xlsx', '.xls']:
-                entries = self.parse_excel_file(file_path)
+        filtered = []
+
+        for match in matches:
+            match_title = (match.get('title') or '').lower().strip()
+            variant_words = match_title.split()
+            variant_word_count = len(variant_words)
+
+            # For short search terms (1-2 words), be VERY strict
+            if search_word_count <= 2:
+                # Word count must be similar (within 1 word)
+                if abs(variant_word_count - search_word_count) > 1:
+                    continue
+
+                # Calculate similarity ratio
+                ratio = fuzz.ratio(search_lower, match_title)
+
+                # For very short titles (1 word), require near-perfect match
+                if search_word_count == 1:
+                    if ratio >= 85:  # "Up" vs "Up" = 100, "Up" vs "Upon" = 67
+                        filtered.append(match)
+                # For 2-word titles, require high similarity
+                elif ratio >= 80:
+                    filtered.append(match)
             else:
-                raise Exception(f"Unsupported file format: {file_ext}")
+                # For longer titles (3+ words), be more lenient
+                ratio = fuzz.ratio(search_lower, match_title)
+                if ratio >= 70:
+                    filtered.append(match)
+
+        return filtered
+
+    def search_media(self, titles: Dict[str, str]) -> Tuple[List[Dict], bool]:
+        """
+        Search for movies using TMDB.
+        Returns (list of matches, was_cached).
+        """
+        # Check cache first
+        cache_key = self._normalize_title_for_cache(titles)
+        if cache_key and cache_key in self.search_cache:
+            cached = self.search_cache[cache_key]
+            return [dict(m) for m in cached], True
+
+        title = titles.get('title', '')
+        year_str = titles.get('year', '')
+        year = int(year_str) if year_str and year_str.isdigit() else None
+
+        if not title:
+            return [], False
+
+        # Rate limit
+        self._rate_limit_wait()
+
+        # Search TMDB
+        try:
+            matches = self.tmdb_client.search_movie(title, year)
+
+            # Apply strict filtering for short titles to prevent false positives
+            matches = self._filter_strict_matches(title, matches)
+
+            # Cache results
+            if cache_key:
+                self.search_cache[cache_key] = [dict(m) for m in matches]
+
+            return matches, False
         except Exception as e:
-            # Return error result
-            error_result = ImportResult(
-                original_text="",
-                parsed_titles={},
-                matches=[],
-                status='error',
-                message=f"Failed to parse file: {e}"
-            )
-            results.append(error_result)
-            if result_callback:
-                result_callback(error_result)
-            return results
+            print(f"TMDB search error: {e}")
+            return [], False
 
-        total_entries = len(entries)
+    def calculate_confidence(self, titles: Dict[str, str], match: Dict) -> float:
+        """
+        Calculate confidence score for a movie match (0-1).
+        """
+        from rapidfuzz import fuzz
 
-        for i, entry in enumerate(entries):
-            # Update progress
-            if progress_callback:
-                progress_callback(i + 1, total_entries, entry[:50])
+        search_title = (titles.get('title') or '').lower().strip()
+        match_title = (match.get('title') or '').lower().strip()
 
-            # Parse titles from entry
-            titles = self.parse_titles_from_entry(entry)
+        if not search_title or not match_title:
+            return 0.0
 
-            if not any(titles.values()):
-                result = ImportResult(
-                    original_text=entry,
-                    parsed_titles=titles,
-                    matches=[],
-                    status='error',
-                    message="Could not extract any titles from entry"
-                )
-                results.append(result)
-                if result_callback:
-                    result_callback(result)
-                continue
+        # Calculate title similarity
+        title_ratio = fuzz.ratio(search_title, match_title) / 100.0
 
-            # Search for matches (checks cache first)
+        # Check year match
+        search_year = titles.get('year')
+        match_year = match.get('year')
+
+        year_bonus = 0.0
+        if search_year and match_year:
             try:
-                matches, was_cached = self.search_anime_smart(titles)
+                search_year_int = int(search_year)
+                match_year_int = int(match_year)
+                if search_year_int == match_year_int:
+                    year_bonus = 0.2  # Exact year match gives 20% bonus
+                elif abs(search_year_int - match_year_int) <= 1:
+                    year_bonus = 0.1  # Within 1 year gives 10% bonus
+            except (ValueError, TypeError):
+                pass
 
-                if not matches:
-                    result = ImportResult(
-                        original_text=entry,
-                        parsed_titles=titles,
-                        matches=[],
-                        status='no_match',
-                        message="No matches found on AniList"
-                    )
-                    results.append(result)
-                    if result_callback:
-                        result_callback(result)
+        # Base confidence on title similarity + year bonus
+        confidence = min(1.0, title_ratio + year_bonus)
+
+        return confidence
+
+
+# ============================================================================
+# TV IMPORT SERVICE
+# ============================================================================
+
+class TVImportService(BaseImportService):
+    """Service for importing TV shows from Excel/ODS files with TMDB matching."""
+
+    def __init__(self, tmdb_client, db_manager):
+        """Initialize TV import service."""
+        super().__init__(db_manager)
+        self.tmdb_client = tmdb_client
+
+    def get_media_type(self) -> str:
+        return "TV"
+
+    def get_match_id(self, match: Dict) -> Optional[int]:
+        return match.get('id')
+
+    def get_id_field_name(self) -> str:
+        return "tmdb_id"
+
+    def parse_titles_from_entry(self, entry: str) -> Dict[str, str]:
+        """
+        Parse titles from entry text.
+        For TV shows, we expect simple format: "Show Title" or "Show Title (2020)"
+        """
+        titles = {'title': '', 'year': ''}
+
+        # Clean the entry
+        entry = entry.strip()
+
+        # Extract year if present
+        year = self._extract_year(entry)
+        if year:
+            titles['year'] = str(year)
+            # Remove year from title
+            entry = re.sub(r'\s*\(\d{4}\)\s*', ' ', entry).strip()
+
+        # The rest is the title
+        if entry:
+            titles['title'] = entry
+
+        return titles
+
+    def _filter_strict_matches(self, search_title: str, matches: List[Dict]) -> List[Dict]:
+        """
+        Strictly filter matches to remove false positives.
+        For short titles (1-2 words), only keep very close matches.
+        Critical for TV shows with short names.
+        """
+        if not search_title or not matches:
+            return matches
+
+        from rapidfuzz import fuzz
+
+        search_lower = search_title.lower().strip()
+        search_words = search_lower.split()
+        search_word_count = len(search_words)
+
+        filtered = []
+
+        for match in matches:
+            match_title = (match.get('title') or '').lower().strip()
+            variant_words = match_title.split()
+            variant_word_count = len(variant_words)
+
+            # For short search terms (1-2 words), be VERY strict
+            if search_word_count <= 2:
+                # Word count must be similar (within 1 word)
+                if abs(variant_word_count - search_word_count) > 1:
                     continue
 
-                # Calculate confidence for each match
-                for match in matches:
-                    match['_confidence'] = self.calculate_confidence(titles, match)
+                # Calculate similarity ratio
+                ratio = fuzz.ratio(search_lower, match_title)
 
-                # Filter by minimum confidence
-                matches = [m for m in matches if m.get('_confidence', 0) >= self.MIN_CONFIDENCE]
+                # For very short titles (1 word), require near-perfect match
+                if search_word_count == 1:
+                    if ratio >= 85:
+                        filtered.append(match)
+                # For 2-word titles, require high similarity
+                elif ratio >= 80:
+                    filtered.append(match)
+            else:
+                # For longer titles (3+ words), be more lenient
+                ratio = fuzz.ratio(search_lower, match_title)
+                if ratio >= 70:
+                    filtered.append(match)
 
-                if not matches:
-                    result = ImportResult(
-                        original_text=entry,
-                        parsed_titles=titles,
-                        matches=[],
-                        status='no_match',
-                        message=f"No matches with sufficient confidence (min {self.MIN_CONFIDENCE:.0%})"
-                    )
-                    results.append(result)
-                    if result_callback:
-                        result_callback(result)
-                    continue
+        return filtered
 
-                # Sort by confidence
-                matches.sort(key=lambda x: x.get('_confidence', 0), reverse=True)
-
-                # Check for duplicates
-                duplicate_matches = []
-                new_matches = []
-
-                for match in matches:
-                    is_dup, dup_desc = self.check_duplicate(match)
-                    if is_dup:
-                        duplicate_matches.append((match, dup_desc))
-                    else:
-                        new_matches.append(match)
-
-                # Determine status
-                if was_cached:
-                    if duplicate_matches and not new_matches:
-                        status = 'duplicate'
-                        message = f"All {len(duplicate_matches)} match(es) already in database [cached search]"
-                    elif duplicate_matches and new_matches:
-                        status = 'partial_duplicate'
-                        message = f"Found {len(new_matches)} new match(es), {len(duplicate_matches)} duplicate(s) [cached search]"
-                    else:
-                        status = 'success'
-                        message = f"Found {len(new_matches)} match(es) [cached search]"
-                else:
-                    if duplicate_matches and not new_matches:
-                        status = 'duplicate'
-                        message = f"All {len(duplicate_matches)} match(es) already in database"
-                    elif duplicate_matches and new_matches:
-                        status = 'partial_duplicate'
-                        message = f"Found {len(new_matches)} new match(es), {len(duplicate_matches)} duplicate(s)"
-                    else:
-                        status = 'success'
-                        message = f"Found {len(new_matches)} match(es)"
-
-                result = ImportResult(
-                    original_text=entry,
-                    parsed_titles=titles,
-                    matches=matches,
-                    status=status,
-                    message=message,
-                    confidence=matches[0].get('_confidence', 0) if matches else 0
-                )
-                results.append(result)
-                # Emit result immediately for live updates
-                if result_callback:
-                    result_callback(result)
-
-            except Exception as e:
-                result = ImportResult(
-                    original_text=entry,
-                    parsed_titles=titles,
-                    matches=[],
-                    status='error',
-                    message=f"Search error: {e}"
-                )
-                results.append(result)
-                if result_callback:
-                    result_callback(result)
-
-        return results
-
-    def mark_as_added(self, anilist_ids: List[int]):
+    def search_media(self, titles: Dict[str, str]) -> Tuple[List[Dict], bool]:
         """
-        Mark AniList IDs as added in this session.
-        Call this after adding items to the database.
+        Search for TV shows using TMDB.
+        Returns (list of matches, was_cached).
         """
-        self.added_in_session.update(anilist_ids)
+        # Check cache first
+        cache_key = self._normalize_title_for_cache(titles)
+        if cache_key and cache_key in self.search_cache:
+            cached = self.search_cache[cache_key]
+            return [dict(m) for m in cached], True
+
+        title = titles.get('title', '')
+        year_str = titles.get('year', '')
+        year = int(year_str) if year_str and year_str.isdigit() else None
+
+        if not title:
+            return [], False
+
+        # Rate limit
+        self._rate_limit_wait()
+
+        # Search TMDB
+        try:
+            matches = self.tmdb_client.search_tv(title, year)
+
+            # Apply strict filtering for short titles to prevent false positives
+            matches = self._filter_strict_matches(title, matches)
+
+            # Cache results
+            if cache_key:
+                self.search_cache[cache_key] = [dict(m) for m in matches]
+
+            return matches, False
+        except Exception as e:
+            print(f"TMDB search error: {e}")
+            return [], False
+
+    def calculate_confidence(self, titles: Dict[str, str], match: Dict) -> float:
+        """
+        Calculate confidence score for a TV show match (0-1).
+        """
+        from rapidfuzz import fuzz
+
+        search_title = (titles.get('title') or '').lower().strip()
+        match_title = (match.get('title') or '').lower().strip()
+
+        if not search_title or not match_title:
+            return 0.0
+
+        # Calculate title similarity
+        title_ratio = fuzz.ratio(search_title, match_title) / 100.0
+
+        # Check year match
+        search_year = titles.get('year')
+        match_year = match.get('year')
+
+        year_bonus = 0.0
+        if search_year and match_year:
+            try:
+                search_year_int = int(search_year)
+                match_year_int = int(match_year)
+                if search_year_int == match_year_int:
+                    year_bonus = 0.2  # Exact year match gives 20% bonus
+                elif abs(search_year_int - match_year_int) <= 1:
+                    year_bonus = 0.1  # Within 1 year gives 10% bonus
+            except (ValueError, TypeError):
+                pass
+
+        # Base confidence on title similarity + year bonus
+        confidence = min(1.0, title_ratio + year_bonus)
+
+        return confidence
+
+
+# Backwards compatibility alias
+SmartImportService = AnimeImportService

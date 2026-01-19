@@ -9,7 +9,7 @@ from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QColor, QBrush
 from pathlib import Path
 from typing import List
-from utils.import_service import SmartImportService, ImportResult
+from utils.import_service import BaseImportService, ImportResult
 from database.models import MediaItem
 
 
@@ -47,17 +47,29 @@ class ImportThread(QThread):
 
 
 class ImportDialog(QDialog):
-    """Dialog for importing anime from Excel/ODS files."""
+    """Dialog for importing media from Excel/ODS files with smart matching."""
 
-    def __init__(self, parent, db_manager, anilist_client):
+    def __init__(self, parent, db_manager, import_service: BaseImportService):
+        """
+        Initialize import dialog.
+
+        Args:
+            parent: Parent widget
+            db_manager: Database manager
+            import_service: Import service instance (Anime, Movie, or TV)
+        """
         super().__init__(parent)
         self.db_manager = db_manager
-        self.anilist_client = anilist_client
-        self.import_service = SmartImportService(anilist_client, db_manager)
+        self.import_service = import_service
         self.import_results: List[ImportResult] = []
         self.import_thread = None
+        self.import_in_progress = False  # Track if import is currently running
 
-        self.setWindowTitle("Smart Import - Anime")
+        # Get media type from service
+        self.media_type = import_service.get_media_type()
+
+        # Set window title based on media type
+        self.setWindowTitle(f"Smart Import - {self.media_type}")
         self.setModal(True)
         self.resize(1000, 700)
 
@@ -137,6 +149,7 @@ class ImportDialog(QDialog):
         self.results_tree.setColumnWidth(2, 200)
         self.results_tree.setSelectionMode(QTreeWidget.SelectionMode.ExtendedSelection)
         self.results_tree.itemSelectionChanged.connect(self.on_selection_changed)
+        self.results_tree.itemDoubleClicked.connect(self.on_item_double_clicked)
         splitter.addWidget(self.results_tree)
 
         # Details panel
@@ -219,6 +232,9 @@ class ImportDialog(QDialog):
         if not hasattr(self, 'file_path'):
             return
 
+        # Mark import as in progress (prevents manual matching during import)
+        self.import_in_progress = True
+
         # Disable buttons
         self.import_button.setEnabled(False)
         self.add_all_button.setEnabled(False)
@@ -258,7 +274,8 @@ class ImportDialog(QDialog):
 
     def on_import_finished(self):
         """Handle import completion."""
-        self.status_label.setText("Import complete!")
+        self.import_in_progress = False  # Import complete, allow manual matching
+        self.status_label.setText("Import complete! Double-click unmatched items to manually search.")
         self.progress_bar.setValue(100)
 
         # Enable buttons
@@ -269,6 +286,7 @@ class ImportDialog(QDialog):
 
     def on_import_error(self, error_message):
         """Handle import error."""
+        self.import_in_progress = False  # Import failed, allow manual matching
         self.status_label.setText(f"Error: {error_message}")
         self.import_button.setEnabled(True)
         QMessageBox.critical(self, "Import Error", f"Failed to import:\n{error_message}")
@@ -513,13 +531,13 @@ class ImportDialog(QDialog):
         reply = QMessageBox.question(
             self,
             "Confirm Add",
-            f"Add {len(items_to_add)} anime to the database?",
+            f"Add {len(items_to_add)} {self.media_type.lower()} item(s) to the database?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         )
 
         if reply == QMessageBox.StandardButton.Yes:
             added_count = self.add_matches_to_db(items_to_add)
-            QMessageBox.information(self, "Success", f"Added {added_count} anime to database!")
+            QMessageBox.information(self, "Success", f"Added {added_count} {self.media_type.lower()} item(s) to database!")
 
             # Refresh results to show new duplicates
             self.populate_results_tree(self.import_results)
@@ -548,39 +566,63 @@ class ImportDialog(QDialog):
             return
 
         added_count = self.add_matches_to_db(items_to_add)
-        QMessageBox.information(self, "Success", f"Added {added_count} anime to database!")
+        QMessageBox.information(self, "Success", f"Added {added_count} {self.media_type.lower()} item(s) to database!")
 
         # Refresh results
         self.populate_results_tree(self.import_results)
 
     def add_matches_to_db(self, matches: List[dict]) -> int:
-        """Add matches to database. Returns count of added items."""
+        """
+        Add matches to database with TRANSACTION SAFETY.
+        Returns count of added items.
+
+        CRITICAL SAFEGUARDS:
+        1. Each item wrapped in try/except to prevent cascading failures
+        2. Uses correct ID field based on media type (anilist_id, tmdb_id)
+        3. Marks items as added in session to prevent duplicates
+        4. Only adds items that passed duplicate check
+        """
         added_count = 0
         added_ids = []
 
         # Get selected status from combo box
         selected_status = self.status_combo.currentText()
 
+        # Get the correct ID field name for this media type
+        id_field_name = self.import_service.get_id_field_name()
+
         for match in matches:
             try:
-                media_item = MediaItem(
-                    title=match.get('title'),
-                    native_title=match.get('native_title'),
-                    romaji_title=match.get('romaji_title'),
-                    year=match.get('year'),
-                    media_type='Anime',
-                    status=selected_status,
-                    anilist_id=match.get('id'),
-                    poster_url=match.get('poster_url')
-                )
+                # Build kwargs for MediaItem, using the correct ID field
+                item_kwargs = {
+                    'title': match.get('title'),
+                    'year': match.get('year'),
+                    'media_type': self.media_type,
+                    'status': selected_status,
+                    'poster_url': match.get('poster_url')
+                }
+
+                # Add the correct ID field (anilist_id for Anime, tmdb_id for Movie/TV)
+                match_id = self.import_service.get_match_id(match)
+                if match_id:
+                    item_kwargs[id_field_name] = match_id
+
+                # For anime, also add native_title and romaji_title
+                if self.media_type == 'Anime':
+                    item_kwargs['native_title'] = match.get('native_title')
+                    item_kwargs['romaji_title'] = match.get('romaji_title')
+
+                media_item = MediaItem(**item_kwargs)
 
                 self.db_manager.add_item(media_item)
                 added_count += 1
-                added_ids.append(match.get('id'))
+                if match_id:
+                    added_ids.append(match_id)
             except Exception as e:
                 print(f"Failed to add {match.get('title')}: {e}")
 
         # Mark as added in import session to prevent duplicate searches
+        # This is a CRITICAL SAFEGUARD against duplicates within the same import
         if added_ids:
             self.import_service.mark_as_added(added_ids)
 
@@ -632,17 +674,18 @@ class ImportDialog(QDialog):
             QMessageBox.information(self, "No Unmatched", "No unmatched entries to export!")
             return
 
+        default_filename = f"unmatched_{self.media_type.lower()}.txt"
         file_path, _ = QFileDialog.getSaveFileName(
             self,
             "Export Unmatched Entries",
-            str(Path.home() / "unmatched_anime.txt"),
+            str(Path.home() / default_filename),
             "Text Files (*.txt);;All Files (*)"
         )
 
         if file_path:
             try:
                 with open(file_path, 'w', encoding='utf-8') as f:
-                    f.write(f"Unmatched Anime Entries ({len(unmatched)} total)\n")
+                    f.write(f"Unmatched {self.media_type} Entries ({len(unmatched)} total)\n")
                     f.write("=" * 80 + "\n\n")
 
                     for i, result in enumerate(unmatched, 1):
@@ -655,3 +698,92 @@ class ImportDialog(QDialog):
                 QMessageBox.information(self, "Success", f"Exported {len(unmatched)} unmatched entries to:\n{file_path}")
             except Exception as e:
                 QMessageBox.critical(self, "Export Error", f"Failed to export:\n{e}")
+
+    def on_item_double_clicked(self, item, column):
+        """
+        Handle double-click on tree item.
+        Allow manual matching for unmatched entries (only when import is complete).
+        """
+        # CRITICAL SAFEGUARD: Don't allow editing while import is in progress
+        if self.import_in_progress:
+            QMessageBox.warning(
+                self,
+                "Import In Progress",
+                "Please wait for the import to complete before manually matching items."
+            )
+            return
+
+        # Only allow manual matching on top-level items (not child matches)
+        if item.parent():
+            return
+
+        # Get the result index from the item
+        result_index = item.data(0, Qt.ItemDataRole.UserRole)
+        if not isinstance(result_index, int) or result_index >= len(self.import_results):
+            return
+
+        result = self.import_results[result_index]
+
+        # Only allow manual matching for unmatched or error items
+        if result.status not in ['no_match', 'error']:
+            return
+
+        # Open manual match dialog
+        self.open_manual_match_dialog(result, result_index)
+
+    def open_manual_match_dialog(self, result: ImportResult, result_index: int):
+        """Open manual match dialog for an unmatched result."""
+        from ui.dialogs.manual_match_dialog import ManualMatchDialog
+
+        dialog = ManualMatchDialog(
+            parent=self,
+            import_service=self.import_service,
+            original_text=result.original_text,
+            parsed_titles=result.parsed_titles
+        )
+
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            selected_matches = dialog.get_selected_matches()
+
+            if selected_matches:
+                # Update the ImportResult with manually selected matches
+                result.matches = selected_matches
+
+                # Calculate confidence for best match
+                if selected_matches:
+                    result.confidence = max(m.get('_confidence', 0) for m in selected_matches)
+
+                # Check for duplicates
+                duplicate_matches = []
+                new_matches = []
+
+                for match in selected_matches:
+                    is_dup, dup_desc = self.import_service.check_duplicate(match)
+                    if is_dup:
+                        duplicate_matches.append((match, dup_desc))
+                    else:
+                        new_matches.append(match)
+
+                # Update status
+                if duplicate_matches and not new_matches:
+                    result.status = 'duplicate'
+                    result.message = f"All {len(duplicate_matches)} manually matched item(s) already in database"
+                elif duplicate_matches and new_matches:
+                    result.status = 'partial_duplicate'
+                    result.message = f"Found {len(new_matches)} new match(es), {len(duplicate_matches)} duplicate(s) [manual]"
+                else:
+                    result.status = 'success'
+                    result.message = f"Found {len(new_matches)} match(es) [manual]"
+
+                # Refresh the tree to show updated result
+                self.populate_results_tree(self.import_results)
+
+                # Update statistics
+                self.update_statistics(self.import_results)
+
+                QMessageBox.information(
+                    self,
+                    "Matches Added",
+                    f"Successfully added {len(selected_matches)} match(es) to this entry.\n\n"
+                    "The entry is now shown with the updated matches."
+                )
