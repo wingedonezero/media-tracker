@@ -133,7 +133,9 @@ class MediaTable(QTableWidget):
 
         if is_multi_select:
             # Multi-select context menu
-            menu.addAction(QAction(f"{len(selected_items)} items selected", self)).setEnabled(False)
+            header_action = QAction(f"{len(selected_items)} items selected", self)
+            header_action.setEnabled(False)
+            menu.addAction(header_action)
             menu.addSeparator()
 
             # Move to submenu
