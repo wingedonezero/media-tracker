@@ -156,6 +156,8 @@ class MainWindow(QMainWindow):
             table.item_double_clicked.connect(self.edit_item)
             table.item_deleted.connect(self.delete_item)
             table.item_moved.connect(self.move_item)
+            table.items_bulk_deleted.connect(self.delete_items_bulk)
+            table.items_bulk_moved.connect(self.move_items_bulk)
             table.refresh_requested.connect(self.load_data)
 
             # Apply saved row height
@@ -352,12 +354,27 @@ class MainWindow(QMainWindow):
         self.load_data()
         self.statusBar().showMessage(f"Deleted: {item.title}", 3000)
 
+    def delete_items_bulk(self, items: list):
+        """Delete multiple media items."""
+        for item in items:
+            self.db.delete_item(item.id)
+        self.load_data()
+        self.statusBar().showMessage(f"Deleted {len(items)} items", 3000)
+
     def move_item(self, item: MediaItem, new_status: str):
         """Move item to a different status category."""
         item.status = new_status
         self.db.update_item(item)
         self.load_data()
         self.statusBar().showMessage(f"Moved '{item.title}' to {new_status}", 3000)
+
+    def move_items_bulk(self, items: list, new_status: str):
+        """Move multiple items to a different status category."""
+        for item in items:
+            item.status = new_status
+            self.db.update_item(item)
+        self.load_data()
+        self.statusBar().showMessage(f"Moved {len(items)} items to {new_status}", 3000)
 
     def search_items(self):
         """Search for items in current media type."""
