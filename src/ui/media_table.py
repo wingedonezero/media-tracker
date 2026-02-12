@@ -16,6 +16,8 @@ class MediaTable(QTableWidget):
     item_double_clicked = pyqtSignal(MediaItem)
     item_deleted = pyqtSignal(MediaItem)
     item_moved = pyqtSignal(MediaItem, str)  # item, new_status
+    items_bulk_deleted = pyqtSignal(list)  # list of items
+    items_bulk_moved = pyqtSignal(list, str)  # list of items, new_status
     refresh_requested = pyqtSignal()
 
     def __init__(self, parent=None):
@@ -36,7 +38,7 @@ class MediaTable(QTableWidget):
         # Table configuration
         self.setAlternatingRowColors(True)
         self.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)  # Enable multi-select
         self.setSortingEnabled(True)
         self.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
 
@@ -105,6 +107,15 @@ class MediaTable(QTableWidget):
             return self.media_items[current_row]
         return None
 
+    def get_selected_items(self) -> List[MediaItem]:
+        """Get all currently selected media items."""
+        selected_rows = set(index.row() for index in self.selectedIndexes())
+        selected_items = []
+        for row in sorted(selected_rows):
+            if row >= 0 and row < len(self.media_items):
+                selected_items.append(self.media_items[row])
+        return selected_items
+
     def _on_double_click(self, item):
         """Handle double-click event."""
         media_item = self.get_selected_item()
@@ -113,66 +124,93 @@ class MediaTable(QTableWidget):
 
     def show_context_menu(self, position):
         """Show context menu on right-click."""
-        item = self.get_selected_item()
-        if not item:
+        selected_items = self.get_selected_items()
+        if not selected_items:
             return
 
         menu = QMenu(self)
+        is_multi_select = len(selected_items) > 1
 
-        # Edit action
-        edit_action = QAction("Edit", self)
-        edit_action.triggered.connect(lambda: self.item_double_clicked.emit(item))
-        menu.addAction(edit_action)
+        if is_multi_select:
+            # Multi-select context menu
+            menu.addAction(QAction(f"{len(selected_items)} items selected", self)).setEnabled(False)
+            menu.addSeparator()
 
-        menu.addSeparator()
+            # Move to submenu
+            move_menu = menu.addMenu("Move all to")
+            statuses = ["On Drive", "To Download", "To Work On"]
+            for status in statuses:
+                # Only show statuses that differ from at least one selected item
+                if any(item.status != status for item in selected_items):
+                    action = QAction(status, self)
+                    action.triggered.connect(lambda checked, s=status: self.items_bulk_moved.emit(selected_items, s))
+                    move_menu.addAction(action)
 
-        # Copy name action(s)
-        if item.media_type == "Anime":
-            # For anime, show submenu with all title types
-            copy_menu = menu.addMenu("Copy Name")
+            menu.addSeparator()
 
-            if item.title:
-                copy_english = QAction(f"English: {item.title[:30]}...", self) if len(item.title) > 30 else QAction(f"English: {item.title}", self)
-                copy_english.triggered.connect(lambda: self._copy_to_clipboard(item.title))
-                copy_menu.addAction(copy_english)
+            # Delete all action
+            delete_action = QAction("Delete all", self)
+            delete_action.triggered.connect(lambda: self._confirm_bulk_delete(selected_items))
+            menu.addAction(delete_action)
 
-            if item.romaji_title:
-                copy_romaji = QAction(f"Romaji: {item.romaji_title[:30]}...", self) if len(item.romaji_title) > 30 else QAction(f"Romaji: {item.romaji_title}", self)
-                copy_romaji.triggered.connect(lambda: self._copy_to_clipboard(item.romaji_title))
-                copy_menu.addAction(copy_romaji)
-
-            if item.native_title:
-                copy_native = QAction(f"Japanese: {item.native_title[:30]}...", self) if len(item.native_title) > 30 else QAction(f"Japanese: {item.native_title}", self)
-                copy_native.triggered.connect(lambda: self._copy_to_clipboard(item.native_title))
-                copy_menu.addAction(copy_native)
         else:
-            # For movies/TV, just copy the title directly
-            copy_action = QAction("Copy Name", self)
-            copy_action.triggered.connect(lambda: self._copy_to_clipboard(item.title))
-            menu.addAction(copy_action)
+            # Single-select context menu (original behavior)
+            item = selected_items[0]
+
+            # Edit action
+            edit_action = QAction("Edit", self)
+            edit_action.triggered.connect(lambda: self.item_double_clicked.emit(item))
+            menu.addAction(edit_action)
+
+            menu.addSeparator()
+
+            # Copy name action(s)
+            if item.media_type == "Anime":
+                # For anime, show submenu with all title types
+                copy_menu = menu.addMenu("Copy Name")
+
+                if item.title:
+                    copy_english = QAction(f"English: {item.title[:30]}...", self) if len(item.title) > 30 else QAction(f"English: {item.title}", self)
+                    copy_english.triggered.connect(lambda: self._copy_to_clipboard(item.title))
+                    copy_menu.addAction(copy_english)
+
+                if item.romaji_title:
+                    copy_romaji = QAction(f"Romaji: {item.romaji_title[:30]}...", self) if len(item.romaji_title) > 30 else QAction(f"Romaji: {item.romaji_title}", self)
+                    copy_romaji.triggered.connect(lambda: self._copy_to_clipboard(item.romaji_title))
+                    copy_menu.addAction(copy_romaji)
+
+                if item.native_title:
+                    copy_native = QAction(f"Japanese: {item.native_title[:30]}...", self) if len(item.native_title) > 30 else QAction(f"Japanese: {item.native_title}", self)
+                    copy_native.triggered.connect(lambda: self._copy_to_clipboard(item.native_title))
+                    copy_menu.addAction(copy_native)
+            else:
+                # For movies/TV, just copy the title directly
+                copy_action = QAction("Copy Name", self)
+                copy_action.triggered.connect(lambda: self._copy_to_clipboard(item.title))
+                menu.addAction(copy_action)
+
+            menu.addSeparator()
+
+            # Move to submenu
+            move_menu = menu.addMenu("Move to")
+
+            statuses = ["On Drive", "To Download", "To Work On"]
+            for status in statuses:
+                if status != item.status:
+                    action = QAction(status, self)
+                    action.triggered.connect(lambda checked, s=status: self.item_moved.emit(item, s))
+                    move_menu.addAction(action)
+
+            menu.addSeparator()
+
+            # Delete action
+            delete_action = QAction("Delete", self)
+            delete_action.triggered.connect(lambda: self._confirm_delete(item))
+            menu.addAction(delete_action)
 
         menu.addSeparator()
 
-        # Move to submenu
-        move_menu = menu.addMenu("Move to")
-
-        statuses = ["On Drive", "To Download", "To Work On"]
-        for status in statuses:
-            if status != item.status:
-                action = QAction(status, self)
-                action.triggered.connect(lambda checked, s=status: self.item_moved.emit(item, s))
-                move_menu.addAction(action)
-
-        menu.addSeparator()
-
-        # Delete action
-        delete_action = QAction("Delete", self)
-        delete_action.triggered.connect(lambda: self._confirm_delete(item))
-        menu.addAction(delete_action)
-
-        menu.addSeparator()
-
-        # Refresh action
+        # Refresh action (always available)
         refresh_action = QAction("Refresh", self)
         refresh_action.triggered.connect(lambda: self.refresh_requested.emit())
         menu.addAction(refresh_action)
@@ -196,3 +234,20 @@ class MediaTable(QTableWidget):
 
         if reply == QMessageBox.StandardButton.Yes:
             self.item_deleted.emit(item)
+
+    def _confirm_bulk_delete(self, items: List[MediaItem]):
+        """Confirm before deleting multiple items."""
+        titles_preview = "\n".join([f"• {item.title}" for item in items[:10]])
+        if len(items) > 10:
+            titles_preview += f"\n... and {len(items) - 10} more"
+
+        reply = QMessageBox.question(
+            self,
+            'Confirm Bulk Delete',
+            f'Are you sure you want to delete {len(items)} items?\n\n{titles_preview}',
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+
+        if reply == QMessageBox.StandardButton.Yes:
+            self.items_bulk_deleted.emit(items)
