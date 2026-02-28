@@ -546,15 +546,12 @@ Window {
                                     contentItem: Text { leftPadding: 12; text: statusCombo.displayText; color: _t.textPrimary; font.pixelSize: 13; verticalAlignment: Text.AlignVCenter }
                                     indicator: Text { x: statusCombo.width - width - 8; anchors.verticalCenter: parent.verticalCenter; text: "▾"; color: _t.textMuted; font.pixelSize: 14 }
                                     delegate: ItemDelegate {
+                                        required property int index
+                                        required property var modelData
                                         width: statusCombo.width
                                         contentItem: Text { text: modelData; color: highlighted ? _t.textWhite : _t.textPrimary; font.pixelSize: 13; leftPadding: 8 }
                                         background: Rectangle { color: highlighted ? _t.accent : "transparent" }
                                         highlighted: statusCombo.highlightedIndex === index
-                                    }
-                                    popup: Popup {
-                                        y: statusCombo.height; width: statusCombo.width; padding: 4
-                                        contentItem: ListView { implicitHeight: contentHeight; model: statusCombo.delegateModel; clip: true }
-                                        background: Rectangle { color: _t.surfaceCard; border.color: _t.borderSubtle; border.width: 1; radius: 8 }
                                     }
                                 }
                             }
@@ -577,15 +574,12 @@ Window {
                                     contentItem: Text { leftPadding: 12; text: qualityCombo.displayText; color: _t.textPrimary; font.pixelSize: 13; verticalAlignment: Text.AlignVCenter }
                                     indicator: Text { x: qualityCombo.width - width - 8; anchors.verticalCenter: parent.verticalCenter; text: "▾"; color: _t.textMuted; font.pixelSize: 14 }
                                     delegate: ItemDelegate {
+                                        required property int index
+                                        required property var modelData
                                         width: qualityCombo.width
                                         contentItem: Text { text: modelData; color: highlighted ? _t.textWhite : _t.textPrimary; font.pixelSize: 13; leftPadding: 8 }
                                         background: Rectangle { color: highlighted ? _t.accent : "transparent" }
                                         highlighted: qualityCombo.highlightedIndex === index
-                                    }
-                                    popup: Popup {
-                                        y: qualityCombo.height; width: qualityCombo.width; padding: 4
-                                        contentItem: ListView { implicitHeight: contentHeight; model: qualityCombo.delegateModel; clip: true }
-                                        background: Rectangle { color: _t.surfaceCard; border.color: _t.borderSubtle; border.width: 1; radius: 8 }
                                     }
                                 }
                             }
