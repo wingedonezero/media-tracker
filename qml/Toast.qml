@@ -27,16 +27,19 @@ Item {
                 width: toastColumn.width
                 height: 44
                 radius: 8
-                color: model.toastType === "error" ? "#ef4444" :
-                       model.toastType === "success" ? "#22c55e" :
-                       model.toastType === "warning" ? "#f59e0b" : "#6366f1"
                 opacity: 0.95
 
                 required property int toastId
+                required property string message
+                required property string toastType
+
+                color: toastType === "error" ? "#ef4444" :
+                       toastType === "success" ? "#22c55e" :
+                       toastType === "warning" ? "#f59e0b" : "#6366f1"
 
                 Text {
                     anchors.centerIn: parent
-                    text: model.message
+                    text: message
                     color: "#ffffff"
                     font.pixelSize: 13
                     elide: Text.ElideRight
