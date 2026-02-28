@@ -23,6 +23,24 @@ Window {
     property int editingId: -1
     property bool searching: false
 
+    palette {
+        window: _t.surfaceCard
+        windowText: _t.textPrimary
+        base: _t.surfaceDark
+        alternateBase: _t.surfaceCard
+        text: _t.textPrimary
+        button: _t.surfaceCard
+        buttonText: _t.textPrimary
+        highlight: _t.accent
+        highlightedText: _t.textWhite
+        toolTipBase: _t.surfaceCard
+        toolTipText: _t.textPrimary
+        placeholderText: _t.textMuted
+        light: _t.surfaceElevated
+        mid: _t.borderSubtle
+        dark: _t.surfaceDark
+    }
+
     // ---- QML-side selection state (avoids model resets & scroll jumps) ----
     property var selectedIndices: ({})   // { rowIndex: true, ... }
     property int selectedCount: 0
