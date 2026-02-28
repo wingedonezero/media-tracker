@@ -51,3 +51,11 @@ pub async fn cache_poster(
 
     Ok(file_path)
 }
+
+/// Delete a cached poster file by its local path.
+pub fn delete_cached_poster(path: &str) {
+    let p = Path::new(path);
+    if p.exists() && p.components().any(|c| c.as_os_str() == "image_cache") {
+        let _ = std::fs::remove_file(p);
+    }
+}
