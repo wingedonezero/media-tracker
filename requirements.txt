@@ -1,4 +1,0 @@
-PyQt6>=6.8,<6.9
-requests
-openpyxl
-rapidfuzz

@@ -1,0 +1,30 @@
+[package]
+name = "media-tracker"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+cxx = "1.0"
+cxx-qt = "0.8"
+cxx-qt-lib = { version = "0.8", features = ["qt_full"] }
+
+# Database
+rusqlite = { version = "0.34", features = ["bundled"] }
+
+# HTTP / API
+reqwest = { version = "0.12", features = ["json"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Image cache hashing
+sha2 = "0.10"
+hex = "0.4"
+
+# Clipboard
+copypasta = "0.10"
+
+[build-dependencies]
+cxx-qt-build = { version = "0.8", features = ["link_qt_object_files"] }
