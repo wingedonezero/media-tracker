@@ -11,6 +11,8 @@ Item {
     height: toastColumn.height
     z: 1000
 
+    property int _nextId: 0
+
     Column {
         id: toastColumn
         anchors.right: parent.right
@@ -30,6 +32,8 @@ Item {
                        model.toastType === "warning" ? "#f59e0b" : "#6366f1"
                 opacity: 0.95
 
+                required property int toastId
+
                 Text {
                     anchors.centerIn: parent
                     text: model.message
@@ -43,7 +47,7 @@ Item {
                 Timer {
                     interval: 3000
                     running: true
-                    onTriggered: toastModel.remove(index)
+                    onTriggered: removeById(toastId)
                 }
 
                 Behavior on opacity { NumberAnimation { duration: 200 } }
@@ -51,7 +55,17 @@ Item {
         }
     }
 
+    function removeById(id) {
+        for (var i = 0; i < toastModel.count; i++) {
+            if (toastModel.get(i).toastId === id) {
+                toastModel.remove(i)
+                return
+            }
+        }
+    }
+
     function show(message, type_) {
-        toastModel.append({ message: message, toastType: type_ || "info" })
+        toastModel.append({ message: message, toastType: type_ || "info", toastId: _nextId })
+        _nextId++
     }
 }

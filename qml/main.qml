@@ -14,6 +14,24 @@ ApplicationWindow {
 
     Theme { id: _t }
 
+    palette {
+        window: _t.surfaceCard
+        windowText: _t.textPrimary
+        base: _t.surfaceDark
+        alternateBase: _t.surfaceCard
+        text: _t.textPrimary
+        button: _t.surfaceCard
+        buttonText: _t.textPrimary
+        highlight: _t.accent
+        highlightedText: _t.textWhite
+        toolTipBase: _t.surfaceCard
+        toolTipText: _t.textPrimary
+        placeholderText: _t.textMuted
+        light: _t.surfaceElevated
+        mid: _t.borderSubtle
+        dark: _t.surfaceDark
+    }
+
     property string activePage: "Movie"
     property string activeStatus: "On Drive"
     property string viewMode: "grid"

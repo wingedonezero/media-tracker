@@ -21,14 +21,6 @@ fn row_to_item(row: &rusqlite::Row) -> rusqlite::Result<MediaItem> {
     })
 }
 
-pub fn get_items(
-    conn: &Connection,
-    media_type: Option<&str>,
-    status: Option<&str>,
-) -> Result<Vec<MediaItem>, rusqlite::Error> {
-    get_items_sorted(conn, media_type, status, "title", "ASC")
-}
-
 pub fn get_items_sorted(
     conn: &Connection,
     media_type: Option<&str>,
@@ -152,11 +144,13 @@ pub fn add_items_batch(
 }
 
 pub fn update_item(conn: &Connection, item: &MediaItem) -> Result<(), rusqlite::Error> {
+    // Don't overwrite tmdb_id/anilist_id — they're set on initial add from search
+    // and the edit dialog doesn't expose them, so they'd be wiped to NULL.
     conn.execute(
         "UPDATE media_items SET title=?1, native_title=?2, romaji_title=?3, year=?4,
          media_type=?5, status=?6, quality_type=?7, source=?8, notes=?9,
-         tmdb_id=?10, anilist_id=?11, poster_url=?12, updated_at=CURRENT_TIMESTAMP
-         WHERE id=?13",
+         poster_url=?10, updated_at=CURRENT_TIMESTAMP
+         WHERE id=?11",
         params![
             item.title,
             item.native_title,
@@ -167,8 +161,6 @@ pub fn update_item(conn: &Connection, item: &MediaItem) -> Result<(), rusqlite::
             item.quality_type,
             item.source,
             item.notes,
-            item.tmdb_id,
-            item.anilist_id,
             item.poster_url,
             item.id,
         ],
@@ -176,9 +168,24 @@ pub fn update_item(conn: &Connection, item: &MediaItem) -> Result<(), rusqlite::
     Ok(())
 }
 
-pub fn delete_item(conn: &Connection, id: i64) -> Result<(), rusqlite::Error> {
-    conn.execute("DELETE FROM media_items WHERE id = ?1", params![id])?;
-    Ok(())
+pub fn get_poster_urls(conn: &Connection, ids: &[i64]) -> Result<Vec<String>, rusqlite::Error> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders: Vec<String> = ids.iter().enumerate().map(|(i, _)| format!("?{}", i + 1)).collect();
+    let sql = format!(
+        "SELECT poster_url FROM media_items WHERE id IN ({}) AND poster_url IS NOT NULL",
+        placeholders.join(", ")
+    );
+    let params: Vec<Box<dyn rusqlite::types::ToSql>> =
+        ids.iter().map(|id| Box::new(*id) as Box<dyn rusqlite::types::ToSql>).collect();
+    let params_refs: Vec<&dyn rusqlite::types::ToSql> =
+        params.iter().map(|p| p.as_ref()).collect();
+    let mut stmt = conn.prepare(&sql)?;
+    let urls = stmt
+        .query_map(params_refs.as_slice(), |row| row.get::<_, String>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(urls)
 }
 
 pub fn delete_items_batch(conn: &Connection, ids: &[i64]) -> Result<(), rusqlite::Error> {
@@ -290,16 +297,37 @@ pub fn check_duplicate_by_id(
     Ok(count > 0)
 }
 
-pub fn count_items_with_quality_type(
+pub fn count_filtered_items(
     conn: &Connection,
-    quality_type: &str,
+    media_type: Option<&str>,
+    status: Option<&str>,
+    search: Option<&str>,
 ) -> Result<i64, rusqlite::Error> {
-    let count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM media_items WHERE quality_type = ?1",
-        params![quality_type],
-        |row| row.get(0),
-    )?;
-    Ok(count)
+    let mut sql = String::from("SELECT COUNT(*) FROM media_items WHERE 1=1");
+    let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+
+    if let Some(mt) = media_type {
+        sql.push_str(" AND media_type = ?");
+        param_values.push(Box::new(mt.to_string()));
+    }
+
+    if let Some(term) = search {
+        if !term.is_empty() {
+            let pattern = format!("%{}%", term);
+            sql.push_str(" AND (title LIKE ? OR notes LIKE ? OR native_title LIKE ? OR romaji_title LIKE ?)");
+            param_values.push(Box::new(pattern.clone()));
+            param_values.push(Box::new(pattern.clone()));
+            param_values.push(Box::new(pattern.clone()));
+            param_values.push(Box::new(pattern));
+        }
+    } else if let Some(s) = status {
+        sql.push_str(" AND status = ?");
+        param_values.push(Box::new(s.to_string()));
+    }
+
+    let params_refs: Vec<&dyn rusqlite::types::ToSql> =
+        param_values.iter().map(|p| p.as_ref()).collect();
+    conn.query_row(&sql, params_refs.as_slice(), |row| row.get(0))
 }
 
 pub fn get_counts(

@@ -370,23 +370,13 @@ impl qobject::SearchModel {
     pub fn load_from_state(mut self: Pin<&mut Self>) {
         let state = get_app_state();
         let results = state.search_results.lock().unwrap();
-        let poster_paths = state.cached_poster_paths.lock().unwrap();
 
         let items: Vec<SearchItem> = results
             .iter()
             .enumerate()
             .map(|(i, r)| {
-                let poster_path = poster_paths
-                    .get(i)
-                    .and_then(|p| p.as_ref())
-                    .map(|p| {
-                        if std::path::Path::new(p).exists() {
-                            format!("file://{}", p)
-                        } else {
-                            String::new()
-                        }
-                    })
-                    .unwrap_or_default();
+                // Use the original remote URL directly — QML Image can load HTTP URLs
+                let poster_path = r.poster_url.clone().unwrap_or_default();
                 let has_poster = !poster_path.is_empty();
 
                 SearchItem {
@@ -404,7 +394,6 @@ impl qobject::SearchModel {
             .collect();
 
         drop(results);
-        drop(poster_paths);
 
         unsafe {
             self.as_mut().begin_reset_model_search();

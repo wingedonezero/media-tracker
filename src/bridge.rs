@@ -67,10 +67,6 @@ pub mod qobject {
         #[cxx_name = "moveItems"]
         fn move_items(self: Pin<&mut Self>, ids: &QString, new_status: &QString);
 
-        #[qinvokable]
-        #[cxx_name = "copyToClipboard"]
-        fn copy_to_clipboard(self: Pin<&mut Self>, text: &QString);
-
         // Online search
         #[qinvokable]
         #[cxx_name = "searchOnline"]
@@ -154,9 +150,7 @@ pub struct AppState {
     pub config: Mutex<AppConfig>,
     pub config_path: PathBuf,
     pub data_dir: PathBuf,
-    pub rt: tokio::runtime::Runtime,
     pub search_results: Mutex<Vec<SearchResult>>,
-    pub cached_poster_paths: Mutex<Vec<Option<String>>>,
 }
 
 /// Global app state, initialized once
@@ -166,16 +160,13 @@ pub fn init_app_state() -> Arc<AppState> {
     let data_dir = get_data_dir();
     let conn = db::connection::init_db(&data_dir).expect("Failed to initialize database");
     let (cfg, config_path) = config::manager::load_config(&data_dir).expect("Failed to load config");
-    let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
 
     let state = Arc::new(AppState {
         db: Mutex::new(conn),
         config: Mutex::new(cfg),
         config_path,
         data_dir,
-        rt,
         search_results: Mutex::new(Vec::new()),
-        cached_poster_paths: Mutex::new(Vec::new()),
     });
 
     APP_STATE.set(state.clone()).ok();
@@ -309,9 +300,16 @@ impl qobject::AppController {
 
         let state = get_app_state();
         let conn = state.db.lock().unwrap();
+
+        // Collect poster paths before deleting so we can clean up cached images
+        let poster_paths = db::queries::get_poster_urls(&conn, &id_vec).unwrap_or_default();
+
         match db::queries::delete_items_batch(&conn, &id_vec) {
             Ok(_) => {
                 drop(conn);
+                for path in &poster_paths {
+                    images::cache::delete_cached_poster(path);
+                }
                 let count = id_vec.len();
                 self.as_mut().toast_message(
                     QString::from(&format!("Deleted {} item(s)", count)),
@@ -362,13 +360,6 @@ impl qobject::AppController {
         }
     }
 
-    pub fn copy_to_clipboard(self: Pin<&mut Self>, text: &QString) {
-        if let Ok(mut ctx) = copypasta::ClipboardContext::new() {
-            use copypasta::ClipboardProvider;
-            let _ = ctx.set_contents(text.to_string());
-        }
-    }
-
     pub fn search_online(mut self: Pin<&mut Self>, query: &QString, year: i32) {
         let query_str = query.to_string().trim().to_string();
         if query_str.is_empty() {
@@ -386,7 +377,6 @@ impl qobject::AppController {
 
         let qt_thread = self.qt_thread();
         let year_opt = if year > 0 { Some(year) } else { None };
-        let data_dir = state.data_dir.clone();
 
         std::thread::spawn(move || {
             let rt = tokio::runtime::Runtime::new().unwrap();
@@ -420,28 +410,11 @@ impl qobject::AppController {
                 match results {
                     Ok(results) => {
                         let count = results.len();
-                        // Cache poster images
-                        let cache_dir = data_dir.join("image_cache");
-                        let mut poster_paths: Vec<Option<String>> = Vec::new();
-                        for r in &results {
-                            if let Some(url) = &r.poster_url {
-                                if !url.is_empty() {
-                                    match images::cache::cache_poster(&client, &cache_dir, url).await {
-                                        Ok(path) => poster_paths.push(Some(path.to_string_lossy().to_string())),
-                                        Err(_) => poster_paths.push(None),
-                                    }
-                                } else {
-                                    poster_paths.push(None);
-                                }
-                            } else {
-                                poster_paths.push(None);
-                            }
-                        }
 
-                        // Store results in global state
+                        // Store results in global state (posters are NOT cached yet —
+                        // they're only downloaded when the user actually adds items)
                         let state = get_app_state();
                         *state.search_results.lock().unwrap() = results;
-                        *state.cached_poster_paths.lock().unwrap() = poster_paths;
 
                         qt_thread.queue(move |mut ctrl: Pin<&mut qobject::AppController>| {
                             ctrl.as_mut().searching_changed(false);
@@ -466,7 +439,7 @@ impl qobject::AppController {
         });
     }
 
-    pub fn add_search_results(mut self: Pin<&mut Self>, indices: &QString) {
+    pub fn add_search_results(self: Pin<&mut Self>, indices: &QString) {
         let idx_vec: Vec<usize> = indices
             .to_string()
             .split(',')
@@ -479,14 +452,15 @@ impl qobject::AppController {
 
         let state = get_app_state();
         let results = state.search_results.lock().unwrap();
-        let poster_paths = state.cached_poster_paths.lock().unwrap();
         let media_type = self.active_page().to_string();
         let active_status = self.active_status().to_string();
 
+        // Collect items and their poster URLs (not yet cached)
         let mut items_to_add: Vec<MediaItem> = Vec::new();
+        let mut poster_urls: Vec<Option<String>> = Vec::new();
         for &idx in &idx_vec {
             if let Some(r) = results.get(idx) {
-                let poster_url = poster_paths.get(idx).and_then(|p| p.clone());
+                poster_urls.push(r.poster_url.clone());
                 let item = MediaItem {
                     id: None,
                     title: r.title.clone(),
@@ -500,7 +474,7 @@ impl qobject::AppController {
                     notes: None,
                     tmdb_id: if media_type != "Anime" { Some(r.api_id) } else { None },
                     anilist_id: if media_type == "Anime" { Some(r.api_id) } else { None },
-                    poster_url,
+                    poster_url: None, // will be set after caching
                     created_at: None,
                     updated_at: None,
                 };
@@ -508,28 +482,58 @@ impl qobject::AppController {
             }
         }
         drop(results);
-        drop(poster_paths);
 
-        let conn = state.db.lock().unwrap();
-        match db::queries::add_items_batch(&conn, &items_to_add, true) {
-            Ok(result) => {
-                drop(conn);
-                let msg = format!(
-                    "Added {}, skipped {} duplicates",
-                    result.added, result.skipped
-                );
-                self.as_mut().toast_message(QString::from(&msg), QString::from("success"));
-                self.as_mut().reload_items();
-                self.as_mut().reload_counts();
-            }
-            Err(e) => {
-                drop(conn);
-                self.as_mut().toast_message(
-                    QString::from(&format!("Error: {}", e)),
-                    QString::from("error"),
-                );
-            }
-        }
+        // Cache posters synchronously (they're small images, and we only
+        // download for the items actually being added)
+        let cache_dir = state.data_dir.join("image_cache");
+        let qt_thread = self.qt_thread();
+
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async {
+                let client = reqwest::Client::builder()
+                    .timeout(std::time::Duration::from_secs(15))
+                    .build()
+                    .unwrap_or_default();
+
+                for (i, url_opt) in poster_urls.iter().enumerate() {
+                    if let Some(url) = url_opt {
+                        if !url.is_empty() {
+                            if let Ok(path) = images::cache::cache_poster(&client, &cache_dir, url).await {
+                                items_to_add[i].poster_url = Some(path.to_string_lossy().to_string());
+                            }
+                        }
+                    }
+                }
+
+                let state = get_app_state();
+                let conn = state.db.lock().unwrap();
+                match db::queries::add_items_batch(&conn, &items_to_add, true) {
+                    Ok(result) => {
+                        drop(conn);
+                        let msg = format!(
+                            "Added {}, skipped {} duplicates",
+                            result.added, result.skipped
+                        );
+                        qt_thread.queue(move |mut ctrl: Pin<&mut qobject::AppController>| {
+                            ctrl.as_mut().toast_message(QString::from(&msg), QString::from("success"));
+                            ctrl.as_mut().reload_items();
+                            ctrl.as_mut().reload_counts();
+                        }).unwrap();
+                    }
+                    Err(e) => {
+                        drop(conn);
+                        let msg = format!("Error: {}", e);
+                        qt_thread.queue(move |mut ctrl: Pin<&mut qobject::AppController>| {
+                            ctrl.as_mut().toast_message(
+                                QString::from(&msg),
+                                QString::from("error"),
+                            );
+                        }).unwrap();
+                    }
+                }
+            });
+        });
     }
 
     pub fn save_settings(mut self: Pin<&mut Self>, api_key: &QString, include_adult: bool, quality_types: &QString) {
@@ -605,23 +609,19 @@ impl qobject::AppController {
         let page = self.active_page().to_string();
         let status = self.active_status().to_string();
         let search = self.search_term().to_string();
-        let sort_f = self.sort_field().to_string();
-        let sort_d = self.sort_dir().to_string();
 
         let state = get_app_state();
         let conn = state.db.lock().unwrap();
 
-        let items = if search.is_empty() {
-            db::queries::get_items_sorted(&conn, Some(&page), Some(&status), &sort_f, &sort_d).unwrap_or_default()
-        } else {
-            db::queries::search_items(&conn, &search, Some(&page)).unwrap_or_default()
-        };
+        let search_opt = if search.is_empty() { None } else { Some(search.as_str()) };
+        let count = db::queries::count_filtered_items(
+            &conn, Some(&page), Some(&status), search_opt,
+        ).unwrap_or(0);
 
-        self.as_mut().set_item_count(items.len() as i32);
+        self.as_mut().set_item_count(count as i32);
         drop(conn);
 
-        // Store items in a way QML can access
-        // We signal items_changed and QML re-reads from the MediaModel
+        // Signal QML to reload MediaModel (which does its own query for the actual rows)
         self.as_mut().items_changed();
     }
 
