@@ -13,6 +13,10 @@ fn main() {
     // Initialize app state (DB, config, etc.) before Qt starts
     bridge::init_app_state();
 
+    // Force "Basic" Qt Quick Controls style so all controls (Menu, ComboBox,
+    // Dialog buttons, etc.) fully respect the dark palette set in QML.
+    std::env::set_var("QT_QUICK_CONTROLS_STYLE", "Basic");
+
     let mut app = QGuiApplication::new();
     let mut engine = QQmlApplicationEngine::new();
 
