@@ -104,7 +104,8 @@ Window {
         nativeTitleField.text = ""
         romajiTitleField.text = ""
         yearField.text = ""
-        statusCombo.currentIndex = 0
+        var statusIdx = statusCombo.find(activeStatus)
+        statusCombo.currentIndex = statusIdx >= 0 ? statusIdx : 0
         qualityCombo.currentIndex = 0
         sourceField.text = ""
         notesField.text = ""
@@ -470,7 +471,11 @@ Window {
 
                         Image {
                             anchors.fill: parent
-                            source: posterUrlField.text !== "" ? "file://" + posterUrlField.text : ""
+                            source: {
+                                if (posterUrlField.text === "") return ""
+                                if (posterUrlField.text.startsWith("http")) return posterUrlField.text
+                                return "file://" + posterUrlField.text
+                            }
                             fillMode: Image.PreserveAspectCrop
                             asynchronous: true
                         }
@@ -537,6 +542,20 @@ Window {
                                 ComboBox {
                                     id: statusCombo; Layout.fillWidth: true
                                     model: ["On Drive", "To Download", "To Work On"]
+                                    background: Rectangle { color: _t.surfaceDark; border.color: statusCombo.activeFocus ? _t.accent : _t.borderSubtle; radius: 8; implicitHeight: 36 }
+                                    contentItem: Text { leftPadding: 12; text: statusCombo.displayText; color: _t.textPrimary; font.pixelSize: 13; verticalAlignment: Text.AlignVCenter }
+                                    indicator: Text { x: statusCombo.width - width - 8; anchors.verticalCenter: parent.verticalCenter; text: "▾"; color: _t.textMuted; font.pixelSize: 14 }
+                                    delegate: ItemDelegate {
+                                        width: statusCombo.width
+                                        contentItem: Text { text: modelData; color: highlighted ? _t.textWhite : _t.textPrimary; font.pixelSize: 13; leftPadding: 8 }
+                                        background: Rectangle { color: highlighted ? _t.accent : "transparent" }
+                                        highlighted: statusCombo.highlightedIndex === index
+                                    }
+                                    popup: Popup {
+                                        y: statusCombo.height; width: statusCombo.width; padding: 4
+                                        contentItem: ListView { implicitHeight: contentHeight; model: statusCombo.delegateModel; clip: true }
+                                        background: Rectangle { color: _t.surfaceCard; border.color: _t.borderSubtle; border.width: 1; radius: 8 }
+                                    }
                                 }
                             }
                         }
@@ -553,6 +572,20 @@ Window {
                                     model: {
                                         var types = controller.getQualityTypes().split("\n").filter(s => s !== "")
                                         return [""].concat(types)
+                                    }
+                                    background: Rectangle { color: _t.surfaceDark; border.color: qualityCombo.activeFocus ? _t.accent : _t.borderSubtle; radius: 8; implicitHeight: 36 }
+                                    contentItem: Text { leftPadding: 12; text: qualityCombo.displayText; color: _t.textPrimary; font.pixelSize: 13; verticalAlignment: Text.AlignVCenter }
+                                    indicator: Text { x: qualityCombo.width - width - 8; anchors.verticalCenter: parent.verticalCenter; text: "▾"; color: _t.textMuted; font.pixelSize: 14 }
+                                    delegate: ItemDelegate {
+                                        width: qualityCombo.width
+                                        contentItem: Text { text: modelData; color: highlighted ? _t.textWhite : _t.textPrimary; font.pixelSize: 13; leftPadding: 8 }
+                                        background: Rectangle { color: highlighted ? _t.accent : "transparent" }
+                                        highlighted: qualityCombo.highlightedIndex === index
+                                    }
+                                    popup: Popup {
+                                        y: qualityCombo.height; width: qualityCombo.width; padding: 4
+                                        contentItem: ListView { implicitHeight: contentHeight; model: qualityCombo.delegateModel; clip: true }
+                                        background: Rectangle { color: _t.surfaceCard; border.color: _t.borderSubtle; border.width: 1; radius: 8 }
                                     }
                                 }
                             }
@@ -667,6 +700,14 @@ Window {
     }
 
     function saveItem() {
+        // When adding from search results, route through addSearchResults
+        // to properly cache the poster and preserve API IDs (tmdb_id/anilist_id)
+        if (!editWin.isEditing && editWin.selectedCount >= 1) {
+            controller.addSearchResults(editWin.getSelectedResultIndices())
+            editWin.close()
+            return
+        }
+
         controller.saveItem(
             editWin.editingId,
             titleField.text,

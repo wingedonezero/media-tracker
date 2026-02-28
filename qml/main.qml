@@ -32,6 +32,40 @@ ApplicationWindow {
         dark: _t.surfaceDark
     }
 
+    // ---- Dark-themed inline components for controls ----
+    component DarkMenu: Menu {
+        background: Rectangle {
+            implicitWidth: 200
+            color: _t.surfaceCard
+            border.color: _t.borderSubtle
+            border.width: 1
+            radius: 8
+        }
+    }
+    component DarkItem: MenuItem {
+        id: _di
+        background: Rectangle {
+            implicitWidth: 200
+            implicitHeight: 32
+            color: _di.highlighted ? _t.surfaceCardHover : "transparent"
+        }
+        contentItem: Text {
+            leftPadding: 12
+            rightPadding: 12
+            text: _di.text
+            font.pixelSize: 13
+            color: _di.enabled ? _t.textPrimary : _t.textMuted
+            verticalAlignment: Text.AlignVCenter
+        }
+    }
+    component DarkSep: MenuSeparator {
+        contentItem: Rectangle {
+            implicitHeight: 1
+            color: _t.borderSubtle
+        }
+        background: Item {}
+    }
+
     property string activePage: "Movie"
     property string activeStatus: "On Drive"
     property string viewMode: "grid"
@@ -400,35 +434,35 @@ ApplicationWindow {
     }
 
     // ---- Single Item Context Menu ----
-    Menu {
+    DarkMenu {
         id: contextMenu
         property int targetRow: -1
 
-        MenuItem {
+        DarkItem {
             text: "Edit"
             onTriggered: handleItemDoubleClick(contextMenu.targetRow)
         }
 
         // Copy Name — simple for Movie/TV
-        MenuItem {
+        DarkItem {
             text: "Copy Name"
             visible: activePage !== "Anime"
             onTriggered: copyToClipboard(mediaModel.getItemTitle(contextMenu.targetRow))
         }
 
         // Copy Name — submenu for Anime (English, Romaji, Japanese)
-        Menu {
+        DarkMenu {
             title: "Copy Name"
             visible: activePage === "Anime"
 
-            MenuItem {
+            DarkItem {
                 text: {
                     var t = mediaModel.getItemTitle(contextMenu.targetRow)
                     return "English: " + (t.length > 35 ? t.substring(0, 35) + "..." : t)
                 }
                 onTriggered: copyToClipboard(mediaModel.getItemTitle(contextMenu.targetRow))
             }
-            MenuItem {
+            DarkItem {
                 text: {
                     var t = mediaModel.getItemRomajiTitle(contextMenu.targetRow)
                     if (t === "") return ""
@@ -437,7 +471,7 @@ ApplicationWindow {
                 visible: mediaModel.getItemRomajiTitle(contextMenu.targetRow) !== ""
                 onTriggered: copyToClipboard(mediaModel.getItemRomajiTitle(contextMenu.targetRow))
             }
-            MenuItem {
+            DarkItem {
                 text: {
                     var t = mediaModel.getItemNativeTitle(contextMenu.targetRow)
                     if (t === "") return ""
@@ -448,15 +482,15 @@ ApplicationWindow {
             }
         }
 
-        MenuSeparator {}
-        Menu {
+        DarkSep {}
+        DarkMenu {
             title: "Move to..."
-            MenuItem { text: "On Drive"; onTriggered: controller.moveItems(String(mediaModel.getItemId(contextMenu.targetRow)), "On Drive") }
-            MenuItem { text: "To Download"; onTriggered: controller.moveItems(String(mediaModel.getItemId(contextMenu.targetRow)), "To Download") }
-            MenuItem { text: "To Work On"; onTriggered: controller.moveItems(String(mediaModel.getItemId(contextMenu.targetRow)), "To Work On") }
+            DarkItem { text: "On Drive"; onTriggered: controller.moveItems(String(mediaModel.getItemId(contextMenu.targetRow)), "On Drive") }
+            DarkItem { text: "To Download"; onTriggered: controller.moveItems(String(mediaModel.getItemId(contextMenu.targetRow)), "To Download") }
+            DarkItem { text: "To Work On"; onTriggered: controller.moveItems(String(mediaModel.getItemId(contextMenu.targetRow)), "To Work On") }
         }
-        MenuSeparator {}
-        MenuItem {
+        DarkSep {}
+        DarkItem {
             text: "Delete"
             onTriggered: {
                 deleteDialog.itemIds = [mediaModel.getItemId(contextMenu.targetRow)]
@@ -466,31 +500,31 @@ ApplicationWindow {
     }
 
     // ---- Bulk Context Menu (multiple items selected) ----
-    Menu {
+    DarkMenu {
         id: bulkContextMenu
 
-        MenuItem {
+        DarkItem {
             text: selectedIds.length + " items selected"
             enabled: false
         }
-        MenuSeparator {}
-        Menu {
+        DarkSep {}
+        DarkMenu {
             title: "Move all to..."
-            MenuItem {
+            DarkItem {
                 text: "On Drive"
                 onTriggered: { controller.moveItems(selectedIds.join(","), "On Drive"); selectedIds = [] }
             }
-            MenuItem {
+            DarkItem {
                 text: "To Download"
                 onTriggered: { controller.moveItems(selectedIds.join(","), "To Download"); selectedIds = [] }
             }
-            MenuItem {
+            DarkItem {
                 text: "To Work On"
                 onTriggered: { controller.moveItems(selectedIds.join(","), "To Work On"); selectedIds = [] }
             }
         }
-        MenuSeparator {}
-        MenuItem {
+        DarkSep {}
+        DarkItem {
             text: "Delete " + selectedIds.length + " items"
             onTriggered: {
                 deleteDialog.itemIds = selectedIds.slice()
@@ -502,22 +536,70 @@ ApplicationWindow {
     // ---- Delete Confirmation Dialog ----
     Dialog {
         id: deleteDialog
-        title: "Confirm Delete"
         modal: true
         anchors.centerIn: parent
-        standardButtons: Dialog.Ok | Dialog.Cancel
 
         property var itemIds: []
+
+        background: Rectangle {
+            color: _t.surfaceCard
+            border.color: _t.borderSubtle
+            radius: 12
+        }
+
+        header: Rectangle {
+            color: "transparent"
+            height: 44
+            Text {
+                anchors.left: parent.left
+                anchors.leftMargin: 16
+                anchors.verticalCenter: parent.verticalCenter
+                text: "Confirm Delete"
+                color: _t.textPrimary
+                font.pixelSize: 15
+                font.bold: true
+            }
+        }
 
         Label {
             text: "Delete " + deleteDialog.itemIds.length + " item(s)? This cannot be undone."
             color: _t.textPrimary
         }
 
-        background: Rectangle {
-            color: _t.surfaceCard
-            border.color: _t.borderSubtle
-            radius: 12
+        footer: Rectangle {
+            color: "transparent"
+            height: 52
+            RowLayout {
+                anchors.fill: parent
+                anchors.rightMargin: 12
+                Item { Layout.fillWidth: true }
+                Rectangle {
+                    Layout.preferredWidth: 60; Layout.preferredHeight: 32
+                    color: "transparent"
+                    Text {
+                        anchors.centerIn: parent; text: "Cancel"
+                        color: dlgCancelMouse.containsMouse ? _t.textPrimary : _t.textSecondary
+                        font.pixelSize: 13
+                    }
+                    MouseArea {
+                        id: dlgCancelMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                        onClicked: deleteDialog.reject()
+                    }
+                }
+                Rectangle {
+                    Layout.preferredWidth: 70; Layout.preferredHeight: 32
+                    radius: 8
+                    color: dlgOkMouse.containsMouse ? _t.dangerHover : _t.danger
+                    Text {
+                        anchors.centerIn: parent; text: "Delete"
+                        color: _t.textWhite; font.pixelSize: 13; font.bold: true
+                    }
+                    MouseArea {
+                        id: dlgOkMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                        onClicked: deleteDialog.accept()
+                    }
+                }
+            }
         }
 
         onAccepted: {
