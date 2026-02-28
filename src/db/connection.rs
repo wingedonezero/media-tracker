@@ -4,6 +4,7 @@ pub fn init_db(data_dir: &std::path::Path) -> Result<Connection, Box<dyn std::er
     std::fs::create_dir_all(data_dir)?;
     let db_path = data_dir.join("media_tracker.db");
     let conn = Connection::open(db_path)?;
+    conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;")?;
     run_migrations(&conn)?;
     Ok(conn)
 }
