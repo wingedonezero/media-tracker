@@ -1,19 +1,6 @@
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-env/
-venv/
-*.egg-info/
-dist/
-build/
-
-# Database
-data/*.db
-data/*.sqlite
-data/*.sqlite3
+# Rust
+/target/
+**/*.rs.bk
 
 # IDE
 .vscode/
@@ -22,17 +9,23 @@ data/*.sqlite3
 *.swo
 *~
 
-# Config with API keys (if we add it later)
-config.ini
-
 # OS
 .DS_Store
 Thumbs.db
 
-# Import data (contains private data)
+# App data (contains user DB, config with API keys, cached posters)
+data/
+*.db
+*.sqlite
+*.sqlite3
+config.ini
+
+# Import data (private)
 Sheet/
 *.ods
 *.xlsx
 *.xls
 import_data.*
+
+# Claude
 .claude
