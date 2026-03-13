@@ -44,8 +44,10 @@ Window {
     // ---- QML-side selection state (avoids model resets & scroll jumps) ----
     property var selectedIndices: ({})   // { rowIndex: true, ... }
     property int selectedCount: 0
+    signal aboutToSave()
     property int lastClickedIndex: -1
     property bool hasSearched: false     // true after first search in this session
+    property var qualityOptions: []
 
     function clearSelection() {
         selectedIndices = ({})
@@ -97,7 +99,17 @@ Window {
         return Object.keys(selectedIndices).join(",")
     }
 
+    function refreshQualityOptions() {
+        var raw = controller.getQualityTypes()
+        var arr = raw.split("\n")
+            .map(function(s) { return s.trim() })
+            .filter(function(s) { return s !== "" })
+            .sort(function(a, b) { return a.toLowerCase().localeCompare(b.toLowerCase()) })
+        qualityOptions = arr
+    }
+
     function openAdd() {
+        refreshQualityOptions()
         isEditing = false
         editingId = -1
         titleField.text = ""
@@ -119,6 +131,7 @@ Window {
     }
 
     function openEdit(row) {
+        refreshQualityOptions()
         isEditing = true
         hasSearched = false
         clearSelection()
@@ -566,10 +579,7 @@ Window {
                                 Text { text: "Quality Type"; color: _t.textSecondary; font.pixelSize: 12; font.bold: true }
                                 ComboBox {
                                     id: qualityCombo; Layout.fillWidth: true
-                                    model: {
-                                        var types = controller.getQualityTypes().split("\n").filter(s => s !== "")
-                                        return [""].concat(types)
-                                    }
+                                    model: [""].concat(editWin.qualityOptions)
                                     background: Rectangle { color: _t.surfaceDark; border.color: qualityCombo.activeFocus ? _t.accent : _t.borderSubtle; radius: 8; implicitHeight: 36 }
                                     contentItem: Text { leftPadding: 12; text: qualityCombo.displayText; color: _t.textPrimary; font.pixelSize: 13; verticalAlignment: Text.AlignVCenter }
                                     indicator: Text { x: qualityCombo.width - width - 8; anchors.verticalCenter: parent.verticalCenter; text: "▾"; color: _t.textMuted; font.pixelSize: 14 }
@@ -694,6 +704,8 @@ Window {
     }
 
     function saveItem() {
+        aboutToSave()
+
         // When adding from search results, route through addSearchResults
         // to properly cache the poster and preserve API IDs (tmdb_id/anilist_id)
         if (!editWin.isEditing && editWin.selectedCount >= 1) {
