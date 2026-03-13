@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls
 import QtQuick.Layouts
 
 Item {
@@ -16,6 +17,15 @@ Item {
     signal itemRightClicked(int row, real mx, real my)
     signal sortRequested(string field, string dir)
 
+
+    function scrollY() {
+        return listView.contentY
+    }
+
+    function setScrollY(y) {
+        var maxY = Math.max(0, listView.contentHeight - listView.height)
+        listView.contentY = Math.max(0, Math.min(y, maxY))
+    }
     function isSelected(row) {
         var id = model.getItemId(row)
         for (var i = 0; i < selectedIds.length; i++) {
@@ -143,6 +153,9 @@ Item {
             clip: true
             boundsBehavior: Flickable.StopAtBounds
             spacing: 1
+            ScrollBar.vertical: ScrollBar {
+                policy: ScrollBar.AlwaysOn
+            }
 
             delegate: Rectangle {
                 width: listView.width

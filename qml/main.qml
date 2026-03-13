@@ -72,6 +72,9 @@ ApplicationWindow {
     property string searchTerm: ""
     property var selectedIds: []
     property int lastClickedRow: -1
+    property bool preserveScrollOnNextReload: false
+    property real preservedScrollY: 0
+    property var savedScrollByContext: ({})
 
     // ---- Clipboard helper (uses Qt's native clipboard) ----
     TextInput {
@@ -87,7 +90,12 @@ ApplicationWindow {
     // ---- Backend Objects ----
     AppController {
         id: controller
-        onItemsChanged: mediaModel.reload(activePage, activeStatus, searchTerm, controller.sort_field, controller.sort_dir)
+        onItemsChanged: {
+            mediaModel.reload(activePage, activeStatus, searchTerm, controller.sort_field, controller.sort_dir)
+            if (preserveScrollOnNextReload) {
+                Qt.callLater(restoreScrollPosition)
+            }
+        }
         onSearchResultsReady: {
             searchModel.loadFromState()
             if (editDialog.visible) editDialog.onSearchDone()
@@ -178,11 +186,13 @@ ApplicationWindow {
                             hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
                             onClicked: {
+                                captureScrollPosition()
                                 activePage = modelData.page
                                 activeStatus = "On Drive"
                                 searchTerm = ""
                                 selectedIds = []
                                 lastClickedRow = -1
+                                restoreSavedScrollForContext(activePage, activeStatus, viewMode)
                                 controller.navigateTo(modelData.page)
                             }
                         }
@@ -296,7 +306,7 @@ ApplicationWindow {
                             Text { anchors.centerIn: parent; text: "▦"; color: _t.textWhite; font.pixelSize: 16 }
                             MouseArea {
                                 id: gridMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
-                                onClicked: { viewMode = "grid"; controller.setViewMode("grid") }
+                                onClicked: { captureScrollPosition(); viewMode = "grid"; restoreSavedScrollForContext(activePage, activeStatus, viewMode); controller.setViewMode("grid") }
                             }
                         }
                         Rectangle {
@@ -306,7 +316,7 @@ ApplicationWindow {
                             Text { anchors.centerIn: parent; text: "☰"; color: _t.textWhite; font.pixelSize: 16 }
                             MouseArea {
                                 id: tableMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
-                                onClicked: { viewMode = "table"; controller.setViewMode("table") }
+                                onClicked: { captureScrollPosition(); viewMode = "table"; restoreSavedScrollForContext(activePage, activeStatus, viewMode); controller.setViewMode("table") }
                             }
                         }
                     }
@@ -362,16 +372,18 @@ ApplicationWindow {
                             Text {
                                 id: statusText
                                 anchors.centerIn: parent
-                                text: modelData
+                                text: modelData + " (" + statusCountFor(modelData) + ")"
                                 color: activeStatus === modelData ? _t.textWhite : _t.textSecondary
                                 font.pixelSize: 13
                             }
                             MouseArea {
                                 id: statusMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                                 onClicked: {
+                                    captureScrollPosition()
                                     activeStatus = modelData
                                     selectedIds = []
                                     lastClickedRow = -1
+                                    restoreSavedScrollForContext(activePage, activeStatus, viewMode)
                                     controller.setStatus(modelData)
                                 }
                             }
@@ -437,6 +449,10 @@ ApplicationWindow {
     DarkMenu {
         id: contextMenu
         property int targetRow: -1
+        property int targetId: -1
+        property string targetTitle: ""
+        property string targetRomajiTitle: ""
+        property string targetNativeTitle: ""
 
         DarkItem {
             text: "Edit"
@@ -447,7 +463,7 @@ ApplicationWindow {
         DarkItem {
             text: "Copy Name"
             visible: activePage !== "Anime"
-            onTriggered: copyToClipboard(mediaModel.getItemTitle(contextMenu.targetRow))
+            onTriggered: copyToClipboard(contextMenu.targetTitle)
         }
 
         // Copy Name — submenu for Anime (English, Romaji, Japanese)
@@ -457,45 +473,51 @@ ApplicationWindow {
 
             DarkItem {
                 text: {
-                    var t = mediaModel.getItemTitle(contextMenu.targetRow)
+                    var t = contextMenu.targetTitle
                     return "English: " + (t.length > 35 ? t.substring(0, 35) + "..." : t)
                 }
-                onTriggered: copyToClipboard(mediaModel.getItemTitle(contextMenu.targetRow))
+                onTriggered: copyToClipboard(contextMenu.targetTitle)
             }
             DarkItem {
                 text: {
-                    var t = mediaModel.getItemRomajiTitle(contextMenu.targetRow)
+                    var t = contextMenu.targetRomajiTitle
                     if (t === "") return ""
                     return "Romaji: " + (t.length > 35 ? t.substring(0, 35) + "..." : t)
                 }
-                visible: mediaModel.getItemRomajiTitle(contextMenu.targetRow) !== ""
-                onTriggered: copyToClipboard(mediaModel.getItemRomajiTitle(contextMenu.targetRow))
+                visible: contextMenu.targetRomajiTitle !== ""
+                onTriggered: copyToClipboard(contextMenu.targetRomajiTitle)
             }
             DarkItem {
                 text: {
-                    var t = mediaModel.getItemNativeTitle(contextMenu.targetRow)
+                    var t = contextMenu.targetNativeTitle
                     if (t === "") return ""
                     return "Japanese: " + (t.length > 35 ? t.substring(0, 35) + "..." : t)
                 }
-                visible: mediaModel.getItemNativeTitle(contextMenu.targetRow) !== ""
-                onTriggered: copyToClipboard(mediaModel.getItemNativeTitle(contextMenu.targetRow))
+                visible: contextMenu.targetNativeTitle !== ""
+                onTriggered: copyToClipboard(contextMenu.targetNativeTitle)
             }
         }
 
         DarkSep {}
         DarkMenu {
             title: "Move to..."
-            DarkItem { text: "On Drive"; onTriggered: controller.moveItems(String(mediaModel.getItemId(contextMenu.targetRow)), "On Drive") }
-            DarkItem { text: "To Download"; onTriggered: controller.moveItems(String(mediaModel.getItemId(contextMenu.targetRow)), "To Download") }
-            DarkItem { text: "To Work On"; onTriggered: controller.moveItems(String(mediaModel.getItemId(contextMenu.targetRow)), "To Work On") }
+            DarkItem { text: "On Drive"; visible: activeStatus !== "On Drive"; onTriggered: { captureScrollPosition(); controller.moveItems(String(contextMenu.targetId), "On Drive") } }
+            DarkItem { text: "To Download"; visible: activeStatus !== "To Download"; onTriggered: { captureScrollPosition(); controller.moveItems(String(contextMenu.targetId), "To Download") } }
+            DarkItem { text: "To Work On"; visible: activeStatus !== "To Work On"; onTriggered: { captureScrollPosition(); controller.moveItems(String(contextMenu.targetId), "To Work On") } }
         }
         DarkSep {}
         DarkItem {
             text: "Delete"
             onTriggered: {
-                deleteDialog.itemIds = [mediaModel.getItemId(contextMenu.targetRow)]
+                deleteDialog.itemIds = [contextMenu.targetId]
                 deleteDialog.open()
             }
+        }
+
+        DarkSep {}
+        DarkItem {
+            text: "Refresh"
+            onTriggered: mediaModel.reload(activePage, activeStatus, searchTerm, controller.sort_field, controller.sort_dir)
         }
     }
 
@@ -512,15 +534,18 @@ ApplicationWindow {
             title: "Move all to..."
             DarkItem {
                 text: "On Drive"
-                onTriggered: { controller.moveItems(selectedIds.join(","), "On Drive"); selectedIds = [] }
+                visible: activeStatus !== "On Drive"
+                onTriggered: { captureScrollPosition(); controller.moveItems(selectedIds.join(","), "On Drive"); selectedIds = [] }
             }
             DarkItem {
                 text: "To Download"
-                onTriggered: { controller.moveItems(selectedIds.join(","), "To Download"); selectedIds = [] }
+                visible: activeStatus !== "To Download"
+                onTriggered: { captureScrollPosition(); controller.moveItems(selectedIds.join(","), "To Download"); selectedIds = [] }
             }
             DarkItem {
                 text: "To Work On"
-                onTriggered: { controller.moveItems(selectedIds.join(","), "To Work On"); selectedIds = [] }
+                visible: activeStatus !== "To Work On"
+                onTriggered: { captureScrollPosition(); controller.moveItems(selectedIds.join(","), "To Work On"); selectedIds = [] }
             }
         }
         DarkSep {}
@@ -530,6 +555,12 @@ ApplicationWindow {
                 deleteDialog.itemIds = selectedIds.slice()
                 deleteDialog.open()
             }
+        }
+
+        DarkSep {}
+        DarkItem {
+            text: "Refresh"
+            onTriggered: mediaModel.reload(activePage, activeStatus, searchTerm, controller.sort_field, controller.sort_dir)
         }
     }
 
@@ -603,6 +634,7 @@ ApplicationWindow {
         }
 
         onAccepted: {
+            captureScrollPosition()
             controller.deleteItems(itemIds.join(","))
             selectedIds = []
         }
@@ -616,6 +648,7 @@ ApplicationWindow {
         mediaModel: mediaModel
         activePage: root.activePage
         activeStatus: root.activeStatus
+        onAboutToSave: captureScrollPosition()
     }
 
     // ---- Settings Dialog (real OS window) ----
@@ -628,6 +661,51 @@ ApplicationWindow {
     Toast { id: toast }
 
     // ---- Helper Functions ----
+    function statusCountFor(statusName) {
+        if (statusName === "On Drive") return controller.on_drive_count
+        if (statusName === "To Download") return controller.to_download_count
+        if (statusName === "To Work On") return controller.to_work_on_count
+        return 0
+    }
+
+    function contextKey(page, status, mode) {
+        return page + "|" + status + "|" + mode
+    }
+
+    function currentScrollY() {
+        return viewMode === "table" ? mediaTable.scrollY() : mediaGrid.scrollY()
+    }
+
+    function setCurrentScrollY(y) {
+        if (viewMode === "table") {
+            mediaTable.setScrollY(y)
+        } else {
+            mediaGrid.setScrollY(y)
+        }
+    }
+
+    function captureScrollPosition() {
+        var key = contextKey(activePage, activeStatus, viewMode)
+        var saved = Object.assign({}, savedScrollByContext)
+        var y = currentScrollY()
+        saved[key] = y
+        savedScrollByContext = saved
+        preservedScrollY = y
+        preserveScrollOnNextReload = true
+    }
+
+    function restoreSavedScrollForContext(page, status, mode) {
+        var key = contextKey(page, status, mode)
+        preservedScrollY = savedScrollByContext[key] || 0
+        preserveScrollOnNextReload = true
+    }
+
+    function restoreScrollPosition() {
+        if (!preserveScrollOnNextReload) return
+        setCurrentScrollY(preservedScrollY)
+        preserveScrollOnNextReload = false
+    }
+
     function handleItemClick(row, modifiers) {
         var id = mediaModel.getItemId(row)
 
@@ -675,6 +753,10 @@ ApplicationWindow {
             bulkContextMenu.popup()
         } else {
             contextMenu.targetRow = row
+            contextMenu.targetId = id
+            contextMenu.targetTitle = mediaModel.getItemTitle(row)
+            contextMenu.targetRomajiTitle = mediaModel.getItemRomajiTitle(row)
+            contextMenu.targetNativeTitle = mediaModel.getItemNativeTitle(row)
             contextMenu.popup()
         }
     }

@@ -44,12 +44,19 @@ Window {
         }
     }
 
+    function sortedQualityTypes(arr) {
+        return arr.slice().sort(function(a, b) {
+            return a.toLowerCase().localeCompare(b.toLowerCase())
+        })
+    }
+
     function loadQualityTypes() {
         var raw = controller.getQualityTypes()
         if (raw === "") {
             qualityTypes = []
         } else {
-            qualityTypes = raw.split("\n").filter(function(s) { return s.trim() !== "" })
+            var arr = raw.split("\n").map(function(s) { return s.trim() }).filter(function(s) { return s !== "" })
+            qualityTypes = sortedQualityTypes(arr)
         }
     }
 
@@ -64,7 +71,7 @@ Window {
         }
         var arr = qualityTypes.slice()
         arr.push(name)
-        qualityTypes = arr
+        qualityTypes = sortedQualityTypes(arr)
         newQtField.text = ""
     }
 
