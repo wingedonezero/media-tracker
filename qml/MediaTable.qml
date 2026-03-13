@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls
 import QtQuick.Layouts
 
 Item {
@@ -143,6 +144,9 @@ Item {
             clip: true
             boundsBehavior: Flickable.StopAtBounds
             spacing: 1
+            ScrollBar.vertical: ScrollBar {
+                policy: ScrollBar.AlwaysOn
+            }
 
             delegate: Rectangle {
                 width: listView.width

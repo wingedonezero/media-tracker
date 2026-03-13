@@ -362,7 +362,7 @@ ApplicationWindow {
                             Text {
                                 id: statusText
                                 anchors.centerIn: parent
-                                text: modelData
+                                text: modelData + " (" + statusCountFor(modelData) + ")"
                                 color: activeStatus === modelData ? _t.textWhite : _t.textSecondary
                                 font.pixelSize: 13
                             }
@@ -437,6 +437,10 @@ ApplicationWindow {
     DarkMenu {
         id: contextMenu
         property int targetRow: -1
+        property int targetId: -1
+        property string targetTitle: ""
+        property string targetRomajiTitle: ""
+        property string targetNativeTitle: ""
 
         DarkItem {
             text: "Edit"
@@ -447,7 +451,7 @@ ApplicationWindow {
         DarkItem {
             text: "Copy Name"
             visible: activePage !== "Anime"
-            onTriggered: copyToClipboard(mediaModel.getItemTitle(contextMenu.targetRow))
+            onTriggered: copyToClipboard(contextMenu.targetTitle)
         }
 
         // Copy Name — submenu for Anime (English, Romaji, Japanese)
@@ -457,45 +461,51 @@ ApplicationWindow {
 
             DarkItem {
                 text: {
-                    var t = mediaModel.getItemTitle(contextMenu.targetRow)
+                    var t = contextMenu.targetTitle
                     return "English: " + (t.length > 35 ? t.substring(0, 35) + "..." : t)
                 }
-                onTriggered: copyToClipboard(mediaModel.getItemTitle(contextMenu.targetRow))
+                onTriggered: copyToClipboard(contextMenu.targetTitle)
             }
             DarkItem {
                 text: {
-                    var t = mediaModel.getItemRomajiTitle(contextMenu.targetRow)
+                    var t = contextMenu.targetRomajiTitle
                     if (t === "") return ""
                     return "Romaji: " + (t.length > 35 ? t.substring(0, 35) + "..." : t)
                 }
-                visible: mediaModel.getItemRomajiTitle(contextMenu.targetRow) !== ""
-                onTriggered: copyToClipboard(mediaModel.getItemRomajiTitle(contextMenu.targetRow))
+                visible: contextMenu.targetRomajiTitle !== ""
+                onTriggered: copyToClipboard(contextMenu.targetRomajiTitle)
             }
             DarkItem {
                 text: {
-                    var t = mediaModel.getItemNativeTitle(contextMenu.targetRow)
+                    var t = contextMenu.targetNativeTitle
                     if (t === "") return ""
                     return "Japanese: " + (t.length > 35 ? t.substring(0, 35) + "..." : t)
                 }
-                visible: mediaModel.getItemNativeTitle(contextMenu.targetRow) !== ""
-                onTriggered: copyToClipboard(mediaModel.getItemNativeTitle(contextMenu.targetRow))
+                visible: contextMenu.targetNativeTitle !== ""
+                onTriggered: copyToClipboard(contextMenu.targetNativeTitle)
             }
         }
 
         DarkSep {}
         DarkMenu {
             title: "Move to..."
-            DarkItem { text: "On Drive"; onTriggered: controller.moveItems(String(mediaModel.getItemId(contextMenu.targetRow)), "On Drive") }
-            DarkItem { text: "To Download"; onTriggered: controller.moveItems(String(mediaModel.getItemId(contextMenu.targetRow)), "To Download") }
-            DarkItem { text: "To Work On"; onTriggered: controller.moveItems(String(mediaModel.getItemId(contextMenu.targetRow)), "To Work On") }
+            DarkItem { text: "On Drive"; visible: activeStatus !== "On Drive"; onTriggered: controller.moveItems(String(contextMenu.targetId), "On Drive") }
+            DarkItem { text: "To Download"; visible: activeStatus !== "To Download"; onTriggered: controller.moveItems(String(contextMenu.targetId), "To Download") }
+            DarkItem { text: "To Work On"; visible: activeStatus !== "To Work On"; onTriggered: controller.moveItems(String(contextMenu.targetId), "To Work On") }
         }
         DarkSep {}
         DarkItem {
             text: "Delete"
             onTriggered: {
-                deleteDialog.itemIds = [mediaModel.getItemId(contextMenu.targetRow)]
+                deleteDialog.itemIds = [contextMenu.targetId]
                 deleteDialog.open()
             }
+        }
+
+        DarkSep {}
+        DarkItem {
+            text: "Refresh"
+            onTriggered: mediaModel.reload(activePage, activeStatus, searchTerm, controller.sort_field, controller.sort_dir)
         }
     }
 
@@ -512,14 +522,17 @@ ApplicationWindow {
             title: "Move all to..."
             DarkItem {
                 text: "On Drive"
+                visible: activeStatus !== "On Drive"
                 onTriggered: { controller.moveItems(selectedIds.join(","), "On Drive"); selectedIds = [] }
             }
             DarkItem {
                 text: "To Download"
+                visible: activeStatus !== "To Download"
                 onTriggered: { controller.moveItems(selectedIds.join(","), "To Download"); selectedIds = [] }
             }
             DarkItem {
                 text: "To Work On"
+                visible: activeStatus !== "To Work On"
                 onTriggered: { controller.moveItems(selectedIds.join(","), "To Work On"); selectedIds = [] }
             }
         }
@@ -530,6 +543,12 @@ ApplicationWindow {
                 deleteDialog.itemIds = selectedIds.slice()
                 deleteDialog.open()
             }
+        }
+
+        DarkSep {}
+        DarkItem {
+            text: "Refresh"
+            onTriggered: mediaModel.reload(activePage, activeStatus, searchTerm, controller.sort_field, controller.sort_dir)
         }
     }
 
@@ -628,6 +647,13 @@ ApplicationWindow {
     Toast { id: toast }
 
     // ---- Helper Functions ----
+    function statusCountFor(statusName) {
+        if (statusName === "On Drive") return controller.on_drive_count
+        if (statusName === "To Download") return controller.to_download_count
+        if (statusName === "To Work On") return controller.to_work_on_count
+        return 0
+    }
+
     function handleItemClick(row, modifiers) {
         var id = mediaModel.getItemId(row)
 
@@ -675,6 +701,10 @@ ApplicationWindow {
             bulkContextMenu.popup()
         } else {
             contextMenu.targetRow = row
+            contextMenu.targetId = id
+            contextMenu.targetTitle = mediaModel.getItemTitle(row)
+            contextMenu.targetRomajiTitle = mediaModel.getItemRomajiTitle(row)
+            contextMenu.targetNativeTitle = mediaModel.getItemNativeTitle(row)
             contextMenu.popup()
         }
     }

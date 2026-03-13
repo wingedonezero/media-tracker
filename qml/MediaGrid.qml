@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls
 import QtQuick.Layouts
 
 Item {
@@ -29,6 +30,9 @@ Item {
 
         clip: true
         boundsBehavior: Flickable.StopAtBounds
+        ScrollBar.vertical: ScrollBar {
+            policy: ScrollBar.AlwaysOn
+        }
 
         delegate: Item {
             width: gridView.cellWidth
