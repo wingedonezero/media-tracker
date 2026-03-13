@@ -233,6 +233,7 @@ pub fn search_items(
     conn: &Connection,
     term: &str,
     media_type: Option<&str>,
+    status: Option<&str>,
 ) -> Result<Vec<MediaItem>, rusqlite::Error> {
     let search_pattern = format!("%{}%", term);
     let mut sql = String::from(
@@ -245,9 +246,15 @@ pub fn search_items(
     param_values.push(Box::new(search_pattern));
 
     if let Some(mt) = media_type {
-        sql.push_str(" AND media_type = ?2");
+        sql.push_str(" AND media_type = ?");
         param_values.push(Box::new(mt.to_string()));
     }
+
+    if let Some(s) = status {
+        sql.push_str(" AND status = ?");
+        param_values.push(Box::new(s.to_string()));
+    }
+
     sql.push_str(" ORDER BY title ASC");
 
     let params_refs: Vec<&dyn rusqlite::types::ToSql> =
@@ -320,7 +327,9 @@ pub fn count_filtered_items(
             param_values.push(Box::new(pattern.clone()));
             param_values.push(Box::new(pattern));
         }
-    } else if let Some(s) = status {
+    }
+
+    if let Some(s) = status {
         sql.push_str(" AND status = ?");
         param_values.push(Box::new(s.to_string()));
     }
