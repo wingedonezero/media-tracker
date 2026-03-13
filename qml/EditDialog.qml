@@ -44,6 +44,7 @@ Window {
     // ---- QML-side selection state (avoids model resets & scroll jumps) ----
     property var selectedIndices: ({})   // { rowIndex: true, ... }
     property int selectedCount: 0
+    signal aboutToSave()
     property int lastClickedIndex: -1
     property bool hasSearched: false     // true after first search in this session
 
@@ -694,6 +695,8 @@ Window {
     }
 
     function saveItem() {
+        aboutToSave()
+
         // When adding from search results, route through addSearchResults
         // to properly cache the poster and preserve API IDs (tmdb_id/anilist_id)
         if (!editWin.isEditing && editWin.selectedCount >= 1) {
