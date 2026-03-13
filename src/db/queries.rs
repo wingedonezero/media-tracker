@@ -233,6 +233,7 @@ pub fn search_items(
     conn: &Connection,
     term: &str,
     media_type: Option<&str>,
+    status: Option<&str>,
 ) -> Result<Vec<MediaItem>, rusqlite::Error> {
     let search_pattern = format!("%{}%", term);
     let mut sql = String::from(
@@ -245,9 +246,15 @@ pub fn search_items(
     param_values.push(Box::new(search_pattern));
 
     if let Some(mt) = media_type {
-        sql.push_str(" AND media_type = ?2");
+        sql.push_str(" AND media_type = ?");
         param_values.push(Box::new(mt.to_string()));
     }
+
+    if let Some(s) = status {
+        sql.push_str(" AND status = ?");
+        param_values.push(Box::new(s.to_string()));
+    }
+
     sql.push_str(" ORDER BY title ASC");
 
     let params_refs: Vec<&dyn rusqlite::types::ToSql> =
@@ -320,7 +327,9 @@ pub fn count_filtered_items(
             param_values.push(Box::new(pattern.clone()));
             param_values.push(Box::new(pattern));
         }
-    } else if let Some(s) = status {
+    }
+
+    if let Some(s) = status {
         sql.push_str(" AND status = ?");
         param_values.push(Box::new(s.to_string()));
     }
@@ -328,6 +337,47 @@ pub fn count_filtered_items(
     let params_refs: Vec<&dyn rusqlite::types::ToSql> =
         param_values.iter().map(|p| p.as_ref()).collect();
     conn.query_row(&sql, params_refs.as_slice(), |row| row.get(0))
+}
+
+
+pub fn get_status_counts(
+    conn: &Connection,
+    media_type: &str,
+    search: Option<&str>,
+) -> Result<std::collections::HashMap<String, i64>, rusqlite::Error> {
+    let mut sql = String::from(
+        "SELECT status, COUNT(*) FROM media_items WHERE media_type = ?",
+    );
+    let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+    param_values.push(Box::new(media_type.to_string()));
+
+    if let Some(term) = search {
+        if !term.is_empty() {
+            let pattern = format!("%{}%", term);
+            sql.push_str(" AND (title LIKE ? OR notes LIKE ? OR native_title LIKE ? OR romaji_title LIKE ?)");
+            param_values.push(Box::new(pattern.clone()));
+            param_values.push(Box::new(pattern.clone()));
+            param_values.push(Box::new(pattern.clone()));
+            param_values.push(Box::new(pattern));
+        }
+    }
+
+    sql.push_str(" GROUP BY status");
+
+    let params_refs: Vec<&dyn rusqlite::types::ToSql> =
+        param_values.iter().map(|p| p.as_ref()).collect();
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(params_refs.as_slice(), |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+    })?;
+
+    let mut counts = std::collections::HashMap::new();
+    for row in rows {
+        let (status, count) = row?;
+        counts.insert(status, count);
+    }
+
+    Ok(counts)
 }
 
 pub fn get_counts(

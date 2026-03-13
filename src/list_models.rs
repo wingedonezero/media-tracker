@@ -220,7 +220,7 @@ impl qobject::MediaModel {
         let db_items = if search_str.is_empty() {
             db::queries::get_items_sorted(&conn, Some(&page_str), Some(&status_str), &sort_f, &sort_d).unwrap_or_default()
         } else {
-            db::queries::search_items(&conn, &search_str, Some(&page_str)).unwrap_or_default()
+            db::queries::search_items(&conn, &search_str, Some(&page_str), Some(&status_str)).unwrap_or_default()
         };
         drop(conn);
 
@@ -279,18 +279,24 @@ impl qobject::MediaModel {
     }
 }
 
-fn resolve_poster(poster_url: Option<&str>, _data_dir: &std::path::Path) -> (String, bool) {
-    if let Some(url) = poster_url {
+fn resolve_poster(poster_url: Option<&str>, data_dir: &std::path::Path) -> (String, bool) {
+    if let Some(raw_url) = poster_url {
+        let url = raw_url.trim();
         if !url.is_empty() {
-            let path = if url.starts_with("asset://localhost/") {
-                url.replace("asset://localhost/", "")
-            } else if url.starts_with('/') || url.contains("image_cache") {
-                url.to_string()
-            } else {
-                url.to_string()
-            };
-            if std::path::Path::new(&path).exists() {
-                return (format!("file://{}", path), true);
+            if url.starts_with("http://") || url.starts_with("https://") {
+                return (url.to_string(), true);
+            }
+
+            let direct = crate::images::cache::resolve_cached_poster_path(url, data_dir);
+            if direct.exists() {
+                return (format!("file://{}", direct.to_string_lossy()), true);
+            }
+
+            if let Some(name) = std::path::Path::new(url).file_name() {
+                let fallback = data_dir.join("image_cache").join(name);
+                if fallback.exists() {
+                    return (format!("file://{}", fallback.to_string_lossy()), true);
+                }
             }
         }
     }

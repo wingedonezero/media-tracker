@@ -17,6 +17,9 @@ pub mod qobject {
         #[qproperty(i32, tv_count)]
         #[qproperty(i32, anime_count)]
         #[qproperty(i32, item_count)]
+        #[qproperty(i32, on_drive_count)]
+        #[qproperty(i32, to_download_count)]
+        #[qproperty(i32, to_work_on_count)]
         #[qproperty(QString, sort_field)]
         #[qproperty(QString, sort_dir)]
         #[qproperty(i32, row_height)]
@@ -194,6 +197,9 @@ pub struct AppControllerRust {
     tv_count: i32,
     anime_count: i32,
     item_count: i32,
+    on_drive_count: i32,
+    to_download_count: i32,
+    to_work_on_count: i32,
     sort_field: QString,
     sort_dir: QString,
     row_height: i32,
@@ -246,6 +252,9 @@ impl qobject::AppController {
         let conn = state.db.lock().unwrap();
         let media_type = self.active_page().to_string();
 
+        let normalized_poster_url = opt_string(poster_url)
+            .map(|url| normalize_poster_url_for_storage(&url, &state.data_dir));
+
         let item = MediaItem {
             id: if id >= 0 { Some(id as i64) } else { None },
             title: title.to_string(),
@@ -259,7 +268,7 @@ impl qobject::AppController {
             notes: opt_string(notes),
             tmdb_id: None,
             anilist_id: None,
-            poster_url: opt_string(poster_url),
+            poster_url: normalized_poster_url,
             created_at: None,
             updated_at: None,
         };
@@ -308,7 +317,7 @@ impl qobject::AppController {
             Ok(_) => {
                 drop(conn);
                 for path in &poster_paths {
-                    images::cache::delete_cached_poster(path);
+                    images::cache::delete_cached_poster(path, &state.data_dir);
                 }
                 let count = id_vec.len();
                 self.as_mut().toast_message(
@@ -500,7 +509,11 @@ impl qobject::AppController {
                     if let Some(url) = url_opt {
                         if !url.is_empty() {
                             if let Ok(path) = images::cache::cache_poster(&client, &cache_dir, url).await {
-                                items_to_add[i].poster_url = Some(path.to_string_lossy().to_string());
+                                let stored_path = path
+                                    .strip_prefix(&state.data_dir)
+                                    .map(|p| p.to_string_lossy().to_string())
+                                    .unwrap_or_else(|_| path.to_string_lossy().to_string());
+                                items_to_add[i].poster_url = Some(stored_path);
                             }
                         }
                     }
@@ -619,6 +632,17 @@ impl qobject::AppController {
         ).unwrap_or(0);
 
         self.as_mut().set_item_count(count as i32);
+
+        if let Ok(status_counts) = db::queries::get_status_counts(&conn, &page, search_opt) {
+            self.as_mut().set_on_drive_count(*status_counts.get("On Drive").unwrap_or(&0) as i32);
+            self.as_mut().set_to_download_count(*status_counts.get("To Download").unwrap_or(&0) as i32);
+            self.as_mut().set_to_work_on_count(*status_counts.get("To Work On").unwrap_or(&0) as i32);
+        } else {
+            self.as_mut().set_on_drive_count(0);
+            self.as_mut().set_to_download_count(0);
+            self.as_mut().set_to_work_on_count(0);
+        }
+
         drop(conn);
 
         // Signal QML to reload MediaModel (which does its own query for the actual rows)
@@ -643,5 +667,23 @@ fn opt_string(s: &QString) -> Option<String> {
         None
     } else {
         Some(st)
+    }
+}
+
+
+fn normalize_poster_url_for_storage(value: &str, data_dir: &std::path::Path) -> String {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+
+    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+        return trimmed.to_string();
+    }
+
+    let resolved = images::cache::resolve_cached_poster_path(trimmed, data_dir);
+    match resolved.strip_prefix(data_dir) {
+        Ok(rel) => rel.to_string_lossy().to_string(),
+        Err(_) => resolved.to_string_lossy().to_string(),
     }
 }
