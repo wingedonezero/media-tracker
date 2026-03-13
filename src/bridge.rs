@@ -246,6 +246,9 @@ impl qobject::AppController {
         let conn = state.db.lock().unwrap();
         let media_type = self.active_page().to_string();
 
+        let normalized_poster_url = opt_string(poster_url)
+            .map(|url| normalize_poster_url_for_storage(&url, &state.data_dir));
+
         let item = MediaItem {
             id: if id >= 0 { Some(id as i64) } else { None },
             title: title.to_string(),
@@ -259,7 +262,7 @@ impl qobject::AppController {
             notes: opt_string(notes),
             tmdb_id: None,
             anilist_id: None,
-            poster_url: opt_string(poster_url),
+            poster_url: normalized_poster_url,
             created_at: None,
             updated_at: None,
         };
@@ -308,7 +311,7 @@ impl qobject::AppController {
             Ok(_) => {
                 drop(conn);
                 for path in &poster_paths {
-                    images::cache::delete_cached_poster(path);
+                    images::cache::delete_cached_poster(path, &state.data_dir);
                 }
                 let count = id_vec.len();
                 self.as_mut().toast_message(
@@ -500,7 +503,11 @@ impl qobject::AppController {
                     if let Some(url) = url_opt {
                         if !url.is_empty() {
                             if let Ok(path) = images::cache::cache_poster(&client, &cache_dir, url).await {
-                                items_to_add[i].poster_url = Some(path.to_string_lossy().to_string());
+                                let stored_path = path
+                                    .strip_prefix(&state.data_dir)
+                                    .map(|p| p.to_string_lossy().to_string())
+                                    .unwrap_or_else(|_| path.to_string_lossy().to_string());
+                                items_to_add[i].poster_url = Some(stored_path);
                             }
                         }
                     }
@@ -643,5 +650,23 @@ fn opt_string(s: &QString) -> Option<String> {
         None
     } else {
         Some(st)
+    }
+}
+
+
+fn normalize_poster_url_for_storage(value: &str, data_dir: &std::path::Path) -> String {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+
+    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+        return trimmed.to_string();
+    }
+
+    let resolved = images::cache::resolve_cached_poster_path(trimmed, data_dir);
+    match resolved.strip_prefix(data_dir) {
+        Ok(rel) => rel.to_string_lossy().to_string(),
+        Err(_) => resolved.to_string_lossy().to_string(),
     }
 }

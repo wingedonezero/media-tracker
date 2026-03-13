@@ -52,10 +52,36 @@ pub async fn cache_poster(
     Ok(file_path)
 }
 
-/// Delete a cached poster file by its local path.
-pub fn delete_cached_poster(path: &str) {
-    let p = Path::new(path);
-    if p.exists() && p.components().any(|c| c.as_os_str() == "image_cache") {
-        let _ = std::fs::remove_file(p);
+
+/// Convert a stored poster path (absolute, relative, file://, or asset://localhost/) into
+/// an absolute filesystem path rooted at `data_dir` when needed.
+pub fn resolve_cached_poster_path(path: &str, data_dir: &Path) -> PathBuf {
+    let normalized = path
+        .strip_prefix("file://")
+        .or_else(|| path.strip_prefix("asset://localhost/"))
+        .unwrap_or(path)
+        .trim();
+
+    let p = Path::new(normalized);
+    if p.is_absolute() {
+        return p.to_path_buf();
+    }
+
+    let rel = if normalized.starts_with("image_cache/") {
+        p.to_path_buf()
+    } else if p.file_name().is_some() {
+        Path::new("image_cache").join(p)
+    } else {
+        p.to_path_buf()
+    };
+
+    data_dir.join(rel)
+}
+
+/// Delete a cached poster file by its stored path.
+pub fn delete_cached_poster(path: &str, data_dir: &Path) {
+    let resolved = resolve_cached_poster_path(path, data_dir);
+    if resolved.exists() && resolved.components().any(|c| c.as_os_str() == "image_cache") {
+        let _ = std::fs::remove_file(resolved);
     }
 }
